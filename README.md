@@ -7,6 +7,10 @@ A tool for editing your Jump Space gear and save while the game is running. Chan
 
 > **Work in progress.** This is a personal modding project, still actively being poked at and fixed. In particular: **inventory (carried item) editing does not currently work correctly** — edits save to disk, but the fix to push them into the live running game session isn't reliable yet, so what you see in-game may not match what the web page shows until you exit and re-enter. Blueprint/assembler equipment editing and currencies are solid.
 
+## A note on cheating
+
+Jump Space is fully co-op with no PvP, and the developer has said as much on the Steam forums: ["we don't intend to care much for cheating since it's a co-op game"](https://steamcommunity.com/app/1757300/discussions/0/4352240067030448723/). This tool only edits your own local save file — it doesn't touch anyone else's data or give any advantage in a competitive sense, since there isn't one. Still, use it in games with people you trust, and don't be surprised if a save edited this way behaves unpredictably around teammates who haven't made the same changes.
+
 ## What you need
 
 - [MelonLoader](https://melonwiki.xyz/) installed for Jump Space.
@@ -56,4 +60,4 @@ This builds `JumpSpaceEditor.dll` into `build\` and, if your `<GameDir>` is set 
 
 ## License
 
-[MIT](LICENSE) - do whatever you want with it.
+[MIT](LICENSE) - do whatever you want with it lol.
