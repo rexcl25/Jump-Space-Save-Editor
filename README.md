@@ -5,6 +5,8 @@ A tool for editing your Jump Space gear and save while the game is running. Chan
 
 **Back up your save first**, just in case.
 
+> **Work in progress.** This is a personal modding project, still actively being poked at and fixed. In particular: **inventory (carried item) editing does not currently work correctly** — edits save to disk, but the fix to push them into the live running game session isn't reliable yet, so what you see in-game may not match what the web page shows until you exit and re-enter. Blueprint/assembler equipment editing and currencies are solid.
+
 ## What you need
 
 - [MelonLoader](https://melonwiki.xyz/) installed for Jump Space.
@@ -24,7 +26,7 @@ A tool for editing your Jump Space gear and save while the game is running. Chan
    - Fine-tune a module's rolled stats with a slider, instead of just rerolling blind
    - Swap what an item's base type is (e.g. turn a Sideclip into a Scorpion)
    - Change a weapon's scope or color
-   - Edit your carried inventory (including swapping consumables)
+   - Edit your carried inventory (including swapping consumables) — **work in progress, see the note above**
    - Add credits and materials
 4. Everything saves automatically when you make a change. You can also hit **Save Now** on the page, or press **F6** in-game, any time you want to be sure.
 
