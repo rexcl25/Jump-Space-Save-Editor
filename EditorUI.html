@@ -1,0 +1,2531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JumpSpace Blueprint Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Palette lifted from the game's own assembler/HUD screens: near-black
+     navy background, dark slate-blue panels, a teal accent for anything
+     interactive/selected (matches the AUGMENTATIONS tab / list-row hover
+     highlight), and the same 4-color rarity ramp the game uses for
+     Standard/Refined/Advanced/Superior (green/blue/purple/orange). Font is
+     Rajdhani - the tall, slightly-technical sans the in-game HUD and menus
+     use for everything from headers down to body copy. */
+  :root {
+    --font: 'Rajdhani', -apple-system, Segoe UI, Roboto, sans-serif;
+    --bg: #0a0e15;
+    --panel: #121a25;
+    --panel2: #1a2531;
+    --panel3: #0d141e;
+    --border: #253141;
+    --border-light: #3a4a5c;
+    --text: #eaf1f7;
+    --muted: #7d8ea1;
+    --accent: #3bc2d9;
+    --accent-dim: #1f6f7d;
+    --accent-glow: rgba(59, 194, 217, 0.35);
+    --warn: #f2c14b;
+    --danger: #ff5c52;
+    --success: #6ee78a;
+    --r-common: #6ee78a;
+    --r-rare: #4fc3f7;
+    --r-epic: #c77dff;
+    --r-legendary: #ff7a52;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--font);
+    background:
+      radial-gradient(ellipse 1400px 700px at 50% -10%, #16202e 0%, transparent 60%),
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    padding: 0 20px 20px 20px;
+    font-size: 15px;
+  }
+  /* Title banner - solid light-blue (the game's own accent color) instead of
+     dark background + accent border, per request. Dark text on top since the
+     accent is too light for the usual near-white body text to stay
+     readable. */
+  .intro {
+    background: var(--accent);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0 16px 0;
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0;
+    padding: 0;
+    color: #06121a;
+  }
+  .sub { color: #0d2b33; font-size: 13px; margin: 4px 0 0 0; }
+  /* Whole toolbar (not just Refresh) stays pinned while you scroll a long
+     item list, with a backdrop blur so scrolled content doesn't show
+     through - mirrors the game's own bottom HUD bar always being on
+     screen instead of scrolling away. */
+  .toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 900;
+    display: flex;
+    gap: 10px;
+    padding: 10px 0;
+    margin: 0 0 6px 0;
+    align-items: center;
+    flex-wrap: wrap;
+    background: #080B11;
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--border);
+  }
+  #status {
+    position: sticky;
+    top: 53px;
+    z-index: 890;
+    color: var(--muted);
+    font-size: 12px;
+    min-height: 16px;
+    padding: 4px 0 10px 0;
+    background: #080B11;
+    backdrop-filter: blur(6px);
+  }
+  button, select, input {
+    font-family: var(--font);
+  }
+  button {
+    background: var(--panel2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 7px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+  }
+  button:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-glow) inset; }
+  /* +/- level steppers flanking the level input - narrow/square instead of
+     the usual padded text-button shape, since they only ever hold a single
+     glyph. */
+  button.stepper-btn {
+    padding: 7px 10px;
+    min-width: 30px;
+    text-align: center;
+  }
+  /* "Upgrade Level" once BlueprintIsUpgradeable (the game's own official
+     check) says a blueprint is already at its cap - greyed out and inert,
+     same idea as the "3 / 5" max-level display already used for modules,
+     just as a disabled state instead of a text readout since there's no
+     natural place to show a number for the blueprint's own overall level. */
+  button:disabled {
+    cursor: default;
+    opacity: 0.4;
+    color: var(--muted);
+  }
+  button:disabled:hover { border-color: var(--border); box-shadow: none; }
+  button.primary {
+    background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dim) 100%);
+    color: #04141a;
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+  button.primary:hover { box-shadow: 0 0 14px var(--accent-glow); }
+  button.warn { border-color: var(--warn); color: var(--warn); }
+  button.warn:hover { box-shadow: 0 0 0 1px var(--warn) inset; }
+  button.danger { border-color: var(--danger); color: var(--danger); }
+  button.danger:hover { background: rgba(255, 92, 82, 0.12); box-shadow: 0 0 0 1px var(--danger) inset; }
+  /* Small yellow keybind chip, matching the game's own bottom-bar key
+     hints (e.g. the "F" / "Tab" badges next to Leave/View Loot Log). */
+  .keybind {
+    display: inline-block;
+    font-family: var(--font);
+    font-weight: 700;
+    font-size: 11px;
+    color: #1a1608;
+    background: var(--warn);
+    border-radius: 3px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    letter-spacing: 0;
+    text-transform: none;
+    vertical-align: 1px;
+  }
+  input, select {
+    background: var(--panel3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 9px;
+    font-size: 13px;
+    line-height: 1.6; /* dropdowns rendered slightly taller than the flex-wrap gap allowed for, causing wrapped rows to overlap when two of them stacked */
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-glow); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0 16px 14px 16px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  /* Header strip look, same as the game's "LOOT LOG" / "SPACE SUIT
+     AUGMENTATIONS" panel title bars: solid dark strip, bottom accent
+     line, uppercase tracked title bleeding to the panel's full width. */
+  .panel h2 {
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0 -16px 12px -16px;
+    padding: 10px 16px;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: var(--panel3);
+    border-bottom: 2px solid var(--accent);
+  }
+  .currency-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    background: var(--panel3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .currency-row .name { width: 140px; font-size: 13px; font-weight: 600; }
+  .currency-row .amount { width: 90px; color: var(--text); font-size: 15px; font-weight: 700; }
+  .currency-row input[type=number] { width: 100px; }
+  .keybind-hint-row {
+    color: var(--muted);
+    font-size: 12px;
+    padding: 2px 2px 8px 2px;
+  }
+
+  .group-header {
+    font-size: 24px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 26px 0 12px 0;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+  }
+  .group-header:first-child { margin-top: 0; }
+  .category-header {
+    font-size: 17px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    margin: 16px 0 10px 4px;
+  }
+  .category-empty { color: var(--muted); font-size: 12px; margin: 0 0 12px 4px; }
+
+  /* Left edge stripe colored per-item-rarity is set inline (border-left-color)
+     from JS since the color is data-driven - same signal the game gives via
+     colored rarity text, just carried onto the card edge here since these
+     cards hold a lot more controls than an in-game list row. */
+  .bp-card {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  /* A search combo's dropdown (.module-combo-list, position:absolute) can
+     render past its own card's bottom edge - e.g. "Change consumable" is
+     often the last thing in a consumable's card. Cards themselves are plain
+     static-position boxes stacked in normal document flow, so without this,
+     the NEXT card in the list paints over that dropdown regardless of its
+     own z-index (z-index only matters once something actually establishes a
+     stacking context - a bare position:relative with no z-index doesn't).
+     Lifting the whole card above its siblings only while something inside it
+     has focus (i.e. the combo is actually open) keeps normal scrolling/
+     layout untouched otherwise. */
+  .bp-card:focus-within { position: relative; z-index: 30; }
+  /* Placeholder row for a real, confirmed-empty slot between two owned
+     items in the same category (see withSlotOrderingAndGaps) - dashed
+     border and no rarity accent so it reads as "nothing here" at a glance,
+     not just another item. */
+  .bp-card.empty-slot {
+    background: transparent;
+    border-style: dashed;
+    border-left-style: dashed;
+    padding: 8px 14px;
+    opacity: 0.55;
+  }
+  .bp-card.empty-slot .bp-meta { margin-left: 0; font-style: italic; }
+  /* Small muted note under a panel's <h2>, for a caveat that applies to the
+     whole section rather than any one item in it. */
+  .panel-note {
+    color: var(--muted);
+    font-size: 12px;
+    font-style: italic;
+    margin: -6px 0 10px 0;
+  }
+  .bp-header, .bp-title-row, .bp-actions-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .bp-title-row { margin-bottom: 8px; }
+  .bp-actions-row { margin-bottom: 2px; }
+  .bp-name { font-weight: 700; font-size: 16px; }
+  .bp-name .bp-index { font-weight: 400; color: var(--muted); }
+  .bp-meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+  /* "Lv 12" chip, matching the game's dark level badge next to item names. */
+  .level-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    background: var(--panel3);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    padding: 2px 8px 2px 6px;
+  }
+  .level-badge .lv-label { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 10px; }
+  .module-section-header {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 12px 0 4px 2px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .module-section-header:first-of-type { border-top: none; padding-top: 0; }
+  /* Same typography as .module-section-header (uppercase, muted, letter-
+     spaced) but inline instead of a full-width block with its own
+     border/margin - for labels like "Type:" that sit next to a control in a
+     flex row rather than heading a section. */
+  .inline-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .module-row {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: var(--panel);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border);
+  }
+  .module-row-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .module-toggle {
+    display: inline-block;
+    width: 14px;
+    color: var(--muted);
+    font-size: 11px;
+    transition: transform 0.1s;
+  }
+  .module-toggle.expanded { transform: rotate(90deg); }
+  .module-row-summary .rarity-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 6px currentColor;
+  }
+  .module-row-summary .module-name { font-size: 13px; font-weight: 600; }
+  .module-row-details { margin-top: 8px; }
+  .module-row-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .module-row-stats { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+  .tweakable-slider-row { display: flex; align-items: center; gap: 8px; }
+  .tweakable-slider-name { font-size: 11px; color: var(--muted); min-width: 120px; flex-shrink: 0; }
+  .tweakable-slider-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 4px;
+  }
+  .tweakable-slider-value { min-width: 52px; text-align: center; }
+  .module-row .label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    width: 70px;
+  }
+  .module-combo { position: relative; width: 480px; max-width: 100%; }
+  .module-combo.item-template-combo { width: 420px; } /* tiny bit narrower than the default 480px, base item combo only */
+  .module-combo input.type-search { width: 100%; }
+  /* position:fixed (anchored to the actual browser viewport) rather than
+     absolute (anchored to the page, scrolling with it) - top/left/bottom/
+     width/max-height are all set inline by positionComboList() at open time
+     based on real available space, so the list can never render past the
+     edge of the visible window no matter where its input sits on the page
+     or how short the window is. See positionComboList() for why. */
+  .module-combo-list {
+    position: fixed;
+    max-height: 280px;
+    overflow-y: auto;
+    /* Without this, scrolling the list to its own top/bottom edge and
+       continuing to scroll "chains" the leftover wheel movement to the
+       page underneath (default browser behavior for nested scrollables) -
+       that page-level scroll then triggered the close-on-scroll listener
+       below, so the list closed the instant you hit either end of it.
+       Containing the scroll here stops it from ever reaching the page. */
+    overscroll-behavior: contain;
+    background: var(--panel2);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    z-index: 950;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+  }
+  .module-combo-option {
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  }
+  .module-combo-option:last-child { border-bottom: none; }
+  .module-combo-option:hover, .module-combo-option.active {
+    background: linear-gradient(90deg, var(--accent-dim) 0%, var(--panel2) 100%);
+    color: var(--text);
+  }
+  .module-combo-option.current { color: var(--accent); font-weight: 600; }
+  .module-combo-empty { padding: 6px 10px; font-size: 12px; color: var(--muted); }
+  /* 78px was sized to align under the module name back when this sat nested
+     inside the expanded module-row-details block. It now renders as a direct
+     sibling of module-row-summary instead (always visible, not just when
+     expanded), so that much padding just reads as a big empty gap - 39px
+     lines it up under the name text (toggle 14px + gap 8px + dot 9px + gap
+     8px) without the excess. */
+  .module-desc { color: var(--muted); font-size: 12px; margin-top: 4px; padding-left: 0; line-height: 1.4; }
+  /* Rarity dropdowns styled as the colored, bold, uppercase chips the game
+     shows (e.g. "SUPERIOR" in orange on the weapon detail header). */
+  select.rarity-Common, select.rarity-Rare, select.rarity-Epic, select.rarity-Legendary {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: var(--panel3);
+  }
+  select.rarity-Common { color: var(--r-common); border-left: 3px solid var(--r-common); }
+  select.rarity-Rare { color: var(--r-rare); border-left: 3px solid var(--r-rare); }
+  select.rarity-Epic { color: var(--r-epic); border-left: 3px solid var(--r-epic); }
+  select.rarity-Legendary { color: var(--r-legendary); border-left: 3px solid var(--r-legendary); }
+  .empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+
+  .layout { display: flex; align-items: flex-start; gap: 24px; }
+  .content { flex: 1; min-width: 0; }
+  .category-nav {
+    position: sticky;
+    top: 100px;
+    width: 190px;
+    flex-shrink: 0;
+    max-height: calc(100vh - 116px);
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 4px;
+  }
+  .category-nav .nav-group-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    padding: 8px 12px 4px 12px;
+  }
+  /* Expand/Collapse All live pinned at the top of the sticky sidebar (not
+     the top toolbar) since they're per-list view controls, not global
+     actions - keeping them here means they're always in reach right next to
+     what they affect, no matter how far down the list you've scrolled. */
+  .category-nav .nav-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 8px 10px 8px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .category-nav .nav-actions button {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  .category-nav a {
+    display: block;
+    padding: 7px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    text-decoration: none;
+    border-radius: 4px;
+    border-left: 3px solid transparent;
+  }
+  .category-nav a:hover {
+    background: linear-gradient(90deg, var(--accent-dim) 0%, transparent 100%);
+    color: var(--text);
+    border-left-color: var(--accent);
+  }
+  .tag {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--panel3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  /* Module level ("3 / 5") in near-white, same treatment as the number in
+     the item's own "Lv 12" level-badge, instead of the muted color every
+     other .tag uses. */
+  .tag.module-level { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <h1>JumpSpace Blueprint Editor</h1>
+  <div class="sub">Talks to the mod running inside your game. Leave this tab open on a second monitor.</div>
+</div>
+
+<div class="toolbar">
+  <button class="primary" onclick="refreshAll()">Refresh<span class="keybind">F5</span></button>
+  <button class="warn" onclick="saveNow()">Save Now<span class="keybind">F6</span></button>
+  <select id="diagnostics-select" title="Debug - tucked away in a dropdown so they can't get bumped by accident" onchange="runDiagnostic(this.value); this.selectedIndex = 0;">
+    <option value="" selected disabled>Debug&hellip;</option>
+    <option value="searchModuleDatabase">Search Module DB</option>
+    <option value="diagnoseUserData">Diagnose Data Stability</option>
+    <option value="dumpItemGenerator">Inspect ItemGenerator</option>
+    <option value="dumpCategories">Inspect Categories</option>
+    <option value="dumpModuleCompatibility">Inspect Module Compatibility</option>
+    <option value="dumpModuleKinds">Inspect Module Kinds (basic vs custom)</option>
+    <option value="dumpItemTemplateDiscovery">Inspect Item Template Discovery (swap item type)</option>
+    <option value="dumpScopeAttachmentDiscovery">Inspect Scope/Attachment Discovery</option>
+    <option value="dumpCosmeticsScopeDiscovery">Inspect Cosmetics/Scope Discovery</option>
+    <option value="dumpCosmeticSelectionDiscovery">Inspect Cosmetic Selection Discovery</option>
+    <option value="dumpWeaponShipTemplateCatalog">Inspect Weapon/Ship Template Catalog</option>
+    <option value="dumpInventoryDiscovery">Inspect Inventory Discovery</option>
+    <option value="dumpBlueprintOrderingDiscovery">Inspect Blueprint Ordering</option>
+    <option value="dumpConsumableCatalogDiscovery">Inspect Consumable/Pickup Name Catalog</option>
+    <option value="dumpConsumableFilterDebug">Inspect Consumable Filter Debug (why is X shown/hidden)</option>
+    <option value="dumpBlueprintLevelCapDiscovery">Inspect Blueprint Level Cap Discovery</option>
+    <option value="dumpHotbarUIDiscovery">Inspect Hotbar UI Discovery</option>
+    <option value="dumpHotbarUIByValueDiscovery">Inspect Hotbar UI Discovery (by value)</option>
+    <option value="dumpHotbarUIByReferenceDiscovery">Inspect Hotbar UI Discovery (by reference)</option>
+    <option value="startHotbarRefreshTrace">Start Hotbar Refresh Trace</option>
+    <option value="stopHotbarRefreshTrace">Stop Hotbar Refresh Trace</option>
+    <option value="dumpHotbarGameObjectDiscovery">Inspect Hotbar GameObject Discovery (by name)</option>
+    <option value="dumpPickupSystemDiscovery">Inspect Pickup System Discovery (RuntimeItemDummy)</option>
+    <option value="dumpPlayerPickupableItemHandlerDiscovery">Inspect PlayerPickupableItemHandler (PickedUpItems)</option>
+    <option value="tryRefreshHeldItem">Try Refresh Held Item</option>
+    <option value="dumpArtifactSystemDiscovery">Inspect Artifact System Discovery</option>
+    <option value="dumpModuleValueRangeDiscovery">Inspect Module Value Range (RNG roll range)</option>
+  </select>
+  <button class="danger" onclick="resetEverything()" title="Restores every item's rarity/level, every module's type/rarity/level/rolls, and every currency amount back to whatever they were when you first opened/refreshed this page this session">Reset Everything</button>
+</div>
+<div id="status"></div>
+
+<div class="layout">
+  <nav class="category-nav" id="category-nav"></nav>
+  <div class="content">
+    <div class="panel" id="currencies-panel">
+      <h2>Currencies</h2>
+      <div class="currency-row" id="credits-row" style="border-left:3px solid var(--warn); display:none;">
+        <span class="rarity-dot" style="background:var(--warn);color:var(--warn);"></span>
+        <div class="name" style="color:var(--warn);">Credits</div>
+        <div class="amount" id="credits-amount">-</div>
+        <input type="number" id="credits-input" placeholder="new amount">
+        <button onclick="setCredits()">Set</button>
+      </div>
+      <div class="keybind-hint-row" id="credits-keybind-hint" style="display:none;"><span class="keybind" title="In-game hotkey - adds 25,000 credits">F7</span> adds 25,000 credits</div>
+      <div id="ingots-list"></div>
+      <div class="keybind-hint-row" id="ingots-keybind-hint" style="display:none;"><span class="keybind" title="In-game hotkey - adds to every ingot tier at once">F8</span> adds to every ingot tier at once: Pristine +1, Flawless +5, Pure +10, Flawed +15, Crude +20</div>
+    </div>
+    <div class="panel" id="currencies-hidden-notice" style="display:none;">
+      <h2>Currencies</h2>
+      <div class="empty" id="currencies-hidden-text">No currencies found - please enter your hangar.</div>
+    </div>
+
+    <div class="panel" id="inventory-panel">
+      <h2>Inventory (carried items)</h2>
+      <div class="panel-note">Changes here save correctly right away, but the in-game display doesn't refresh until you reload - exit and re-enter the game, or jump to a new sector.</div>
+      <div id="inventory-root"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div id="blueprints-root"><div class="empty">Loading...</div></div>
+    <div id="blueprints-hidden-notice" class="empty" style="display:none;">No blueprints found - please enter your hangar.</div>
+  </div>
+</div>
+
+<script>
+// Internal enum names -> what the game actually shows you in the assembler UI.
+const RARITY_DISPLAY = { Common: "Standard", Rare: "Refined", Epic: "Advanced", Legendary: "Superior" };
+const RARITY_COLOR = { Common: "#6ee78a", Rare: "#4fc3f7", Epic: "#c77dff", Legendary: "#ff7a52" };
+const RARITIES = ["Legendary", "Epic", "Rare", "Common"]; // top-to-bottom: most rare to most common
+
+// The game displays Custom Modules sorted by rarity (highest first), NOT in
+// raw m_Modules array/index order - confirmed by the user in-game. Upgradeable
+// Features aren't sorted this way since they always match the item's own
+// rarity (so every entry in that section is the same rarity anyway).
+function sortByRarityDesc(modules) {
+  return modules.slice().sort((a, b) => RARITIES.indexOf(a.rarity) - RARITIES.indexOf(b.rarity));
+}
+
+// Fixed category order/grouping, matching the in-game Equipment/Components tabs.
+const CATEGORY_LAYOUT = [
+  { group: "Equipment", categories: ["Weapons"] },
+  { group: "Components", categories: [
+      "Multiturrets", "Pilot Cannons", "Special Weapons", "Engines",
+      "Shield Generators", "Sensors", "Reactors", "Aux. Generators"
+    ]
+  }
+];
+
+let moduleTypes = []; // [{index, name, guid, rarity}]
+
+function setStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.style.color = isError ? '#ff5c52' : '#7d8ea1';
+}
+
+async function api(path, method) {
+  method = method || 'GET';
+  const res = await fetch(path, { method });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+async function refreshAll() {
+  setStatus('Loading...');
+  try {
+    await Promise.all([loadModuleTypes(), loadCosmeticTypes(), loadItemTemplateCatalog(), loadBlueprintSlotCapacities(), loadConsumableTemplateCatalog()]);
+    await Promise.all([loadBlueprints(), loadCurrencies(), loadGameState(), loadInventory()]);
+    setStatus('Up to date.');
+  } catch (e) {
+    setStatus('Error: ' + e.message, true);
+  }
+}
+
+// Hides the currency panel and blueprint list until real save data has
+// actually loaded (blueprint count > 0 - see BuildGameStateJson in
+// EditorMod.cs). No scene/hangar detection involved anymore - it's purely
+// "is there data yet", which in practice only happens once you're in the
+// hangar in-game.
+// null = haven't checked yet. Kept separate from a plain boolean so the
+// very first check (which happens as part of the initial refreshAll() call
+// on page load) doesn't ALSO trigger a redundant forced refresh below -
+// refreshAll() already loads everything that first time. Every check after
+// that can meaningfully compare against a real previous value.
+let lastDataLoaded = null;
+
+async function loadGameState() {
+  try {
+    const state = await api('/api/gameState');
+    const shouldHide = !state.dataLoaded;
+
+    const panel = document.getElementById('currencies-panel');
+    const notice = document.getElementById('currencies-hidden-notice');
+    panel.style.display = shouldHide ? 'none' : '';
+    notice.style.display = shouldHide ? '' : 'none';
+
+    const root = document.getElementById('blueprints-root');
+    const bpNotice = document.getElementById('blueprints-hidden-notice');
+    root.style.display = shouldHide ? 'none' : '';
+    bpNotice.style.display = shouldHide ? '' : 'none';
+
+    // Currencies/blueprints just became available (e.g. you walked into the
+    // hangar after already having this tab open) - force a full refresh
+    // instead of leaving whatever stale/empty data was loaded before they
+    // existed just sitting there behind the now-visible panels.
+    if (lastDataLoaded === false && state.dataLoaded) {
+      lastDataLoaded = true;
+      setStatus('Currencies/blueprints detected - refreshing...');
+      await refreshAll();
+      return;
+    }
+    lastDataLoaded = state.dataLoaded;
+  } catch (e) {
+    // Don't let a gameState failure block the rest of the UI - just leave
+    // everything visible (fail open) and note it in the status line.
+    setStatus('Could not check load state (currencies/blueprints left visible): ' + e.message, true);
+  }
+}
+
+async function saveNow() {
+  try {
+    await api('/api/save', 'POST');
+    setStatus('Saved.');
+  } catch (e) {
+    setStatus('Save failed: ' + e.message, true);
+  }
+}
+
+// Materia ingot tiers (index 0-4: Crude/Flawed/Pure/Flawless/Pristine) get
+// their own 5-color rarity ramp, since the 4-color item rarity palette
+// (RARITY_COLOR) doesn't have enough steps for 5 ingot tiers.
+const INGOT_COLOR = ["#6ee78a", "#4fc3f7", "#c77dff", "#ffa94d", "#ff7a52"]; // green, blue, purple, orange, red
+
+async function loadCurrencies() {
+  const data = await api('/api/currencies');
+  document.getElementById('credits-amount').textContent = data.credits;
+
+  const list = document.getElementById('ingots-list');
+  const creditsRow = document.getElementById('credits-row');
+  const creditsHint = document.getElementById('credits-keybind-hint');
+  const ingotsHint = document.getElementById('ingots-keybind-hint');
+  list.innerHTML = '';
+  if (!data.ingots || data.ingots.length === 0) {
+    // Credits/ingots (and their F7/F8 hints) stay hidden together until
+    // ingot reading actually works - showing credits alone when ingots
+    // silently failed to load was misleading (looked like currencies were
+    // "working" when only half of them were).
+    creditsRow.style.display = 'none';
+    creditsHint.style.display = 'none';
+    ingotsHint.style.display = 'none';
+    list.innerHTML = '<div class="empty">No currencies found - are you loaded into a save?</div>';
+    return;
+  }
+  creditsRow.style.display = '';
+  creditsHint.style.display = '';
+  ingotsHint.style.display = '';
+  // Ingot index runs least-rare to most-rare (0=Crude ... 4=Pristine) - sort
+  // a copy descending so the list reads most-rare to least-rare, credits
+  // stay pinned above this list regardless (separate row in the HTML).
+  const sortedIngots = data.ingots.slice().sort((a, b) => b.index - a.index);
+  sortedIngots.forEach(ing => {
+    const color = INGOT_COLOR[ing.index] || '#7d8ea1';
+    const row = document.createElement('div');
+    row.className = 'currency-row';
+    row.style.borderLeft = `3px solid ${color}`;
+    row.innerHTML = `
+      <span class="rarity-dot" style="background:${color};color:${color}"></span>
+      <div class="name" style="color:${color}">${escapeHtml(ing.name)}</div>
+      <div class="amount">${ing.amount}</div>
+      <input type="number" id="ingot-input-${ing.index}" placeholder="new amount">
+      <button onclick="setIngot(${ing.index})">Set</button>
+    `;
+    list.appendChild(row);
+  });
+}
+
+async function setCredits() {
+  const v = document.getElementById('credits-input').value;
+  if (v === '') return;
+  try {
+    await api(`/api/setCurrency?which=credits&amount=${encodeURIComponent(v)}`, 'POST');
+    await loadCurrencies();
+    setStatus('Credits updated.');
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+async function setIngot(index) {
+  const v = document.getElementById('ingot-input-' + index).value;
+  if (v === '') return;
+  try {
+    await api(`/api/setCurrency?which=ingot&index=${index}&amount=${encodeURIComponent(v)}`, 'POST');
+    await loadCurrencies();
+    setStatus('Ingot updated.');
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+async function loadModuleTypes() {
+  moduleTypes = await api('/api/moduleTypes');
+}
+
+// A module type is compatible with a given item template guid if: it has no
+// allow-list (or the template's on it) AND the template isn't on its
+// forbidden list. This is how the game keeps e.g. ship-weapon-only modules
+// off on-foot guns (each module's m_AllowedItems/m_ForbiddenItems point at
+// specific item templates, not a simple ship/on-foot flag).
+function isModuleTemplateCompatible(m, templateGuid) {
+  if (!templateGuid) return true;
+  const forbidden = m.forbidden || [];
+  const allowed = m.allowed || [];
+  if (forbidden.includes(templateGuid)) return false;
+  if (allowed.length > 0 && !allowed.includes(templateGuid)) return false;
+  return true;
+}
+
+// A module type's own m_IsBasicModule flag has to match what the SLOT is:
+// slots 0/1 are the fixed "Upgradeable Features" (basic modules), everything
+// past that is "Custom Modules" (non-basic). This is what the game itself
+// keys off of for section placement - putting the wrong kind in a slot shows
+// up under the wrong header in-game even though it displays/works fine.
+function moduleKindMatches(m, wantBasic) {
+  return Boolean(m.isBasic) === wantBasic;
+}
+
+function moduleOptionLabel(m) {
+  const desc = m.description ? ' - ' + m.description : '';
+  return `${m.name} (${m.rarity})${desc}`;
+}
+
+// Filters the full module type catalog down to what should be offered for a
+// given slot: item-template-compatible, matching the slot's basic/custom
+// kind, and matching the free-text search (substring match against
+// name/description/rarity, case-insensitive). The currently-equipped module
+// always stays in the list regardless of whether it would otherwise pass any
+// of these filters, so an already-applied "unofficial" combo never just
+// disappears out from under you.
+function filteredModuleOptions(query, templateGuid, wantBasic, currentGuid) {
+  const q = (query || '').trim().toLowerCase();
+  return moduleTypes.filter(m => {
+    if (m.guid === currentGuid) return true;
+    if (!isModuleTemplateCompatible(m, templateGuid)) return false;
+    if (!moduleKindMatches(m, wantBasic)) return false;
+    if (!q) return true;
+    const hay = (m.name + ' ' + (m.description || '') + ' ' + m.rarity).toLowerCase();
+    return hay.includes(q);
+  });
+}
+
+function moduleComboId(bpIndex, modIndex) { return `module-combo-${bpIndex}-${modIndex}`; }
+
+// Searchable module-type combobox for one module slot: a text input showing
+// the current selection (typing filters the list below it, opening on focus
+// shows every compatible option), plus the filtered options list itself
+// (hidden until focused/typed into).
+function moduleComboHtml(bp, mod) {
+  // Match whatever kind this slot ALREADY is (from its own current
+  // module's m_IsBasicModule), not its array index - index alone isn't a
+  // reliable basic/custom split across item types (Reactors: 1 basic slot;
+  // most weapons: 2).
+  const wantBasic = Boolean(mod.isBasic);
+  const current = moduleTypes.find(m => m.guid === mod.guid);
+  const label = current ? moduleOptionLabel(current) : (mod.name || '');
+  return `
+    <div class="module-combo" id="${moduleComboId(bp.index, mod.index)}">
+      <input type="text" class="type-search" autocomplete="off" placeholder="Search modules..."
+        value="${escapeHtml(label)}"
+        data-bp="${bp.index}" data-mod="${mod.index}" data-guid="${escapeHtml(mod.guid || '')}"
+        data-template="${escapeHtml(bp.templateGuid || '')}" data-basic="${wantBasic}"
+        oninput="onModuleComboInput(this)" onfocus="onModuleComboFocus(this)" />
+      <div class="module-combo-list" style="display:none"></div>
+    </div>`;
+}
+
+// query=null means "show everything compatible" (used on focus - the input
+// already contains the current selection's full label at that point, so
+// filtering by it would only ever match itself, which was the bug: opening
+// the list showed just the one already-selected module instead of every
+// available option).
+function renderModuleComboList(input, query) {
+  const bpIndex = parseInt(input.dataset.bp, 10);
+  const modIndex = parseInt(input.dataset.mod, 10);
+  const templateGuid = input.dataset.template || '';
+  const wantBasic = input.dataset.basic === 'true';
+  const currentGuid = input.dataset.guid;
+  const list = input.nextElementSibling;
+  const options = filteredModuleOptions(query, templateGuid, wantBasic, currentGuid);
+  if (options.length === 0) {
+    list.innerHTML = '<div class="module-combo-empty">No matching modules</div>';
+  } else {
+    list.innerHTML = options.map(m => {
+      const cls = 'module-combo-option' + (m.guid === currentGuid ? ' current' : '');
+      return `<div class="${cls}" data-guid="${escapeHtml(m.guid)}" onmousedown="onModuleComboPick(event, ${bpIndex}, ${modIndex})">${escapeHtml(moduleOptionLabel(m))}</div>`;
+    }).join('');
+  }
+  list.style.display = 'block';
+  positionComboList(input, list);
+}
+
+function onModuleComboInput(input) { renderModuleComboList(input, input.value); }
+
+// Focusing the field selects its text (so typing immediately replaces it,
+// standard combobox behavior) and shows every compatible option rather than
+// filtering by whatever label happens to already be sitting in the box.
+function onModuleComboFocus(input) {
+  input.select();
+  renderModuleComboList(input, '');
+}
+
+function onModuleComboPick(evt, bpIndex, modIndex) {
+  const guid = evt.currentTarget.dataset.guid;
+  const combo = document.getElementById(moduleComboId(bpIndex, modIndex));
+  const input = combo.querySelector('input.type-search');
+  const list = combo.querySelector('.module-combo-list');
+  const picked = moduleTypes.find(m => m.guid === guid);
+  input.value = picked ? moduleOptionLabel(picked) : '';
+  input.dataset.guid = guid;
+  list.style.display = 'none';
+  swapModule(bpIndex, modIndex, guid);
+}
+
+// Closes any open combo list when clicking anywhere outside it (mousedown-vs-
+// click ordering above already lets a pick register before this fires).
+document.addEventListener('click', (e) => {
+  document.querySelectorAll('.module-combo-list').forEach(list => {
+    if (list.style.display !== 'none' && !list.parentElement.contains(e.target)) {
+      list.style.display = 'none';
+    }
+  });
+});
+
+// F5 = Refresh, matching the badge on the toolbar button. This is a
+// browser-tab-only shortcut (separate from the F3-F12/PageUp-Down/etc.
+// in-game hotkeys documented in the README, which only work while the game
+// window has OS focus) - preventDefault() stops the browser's own native
+// full-page reload so this does the same AJAX refresh the button does
+// instead (keeps expanded-module state, debug dropdown selection, etc.
+// intact rather than a hard reload wiping it).
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'F5') {
+    e.preventDefault();
+    refreshAll();
+  }
+});
+
+// Cosmetic (scope, color swap, etc.) combo - same searchable-combobox
+// pattern as the module picker above, backed by a small server-side catalog
+// (cosmeticTypes, loaded once) instead of a per-template filter, since every
+// cosmetic slot just needs "anything with a matching slotType".
+let cosmeticTypes = []; // [{index, name, guid, slotType, isAttachment}]
+
+async function loadCosmeticTypes() {
+  cosmeticTypes = await api('/api/cosmeticTypes');
+}
+
+function cosmeticOptionLabel(c) {
+  return c.name;
+}
+
+function filteredCosmeticOptions(query, slotType, currentGuid) {
+  const q = (query || '').trim().toLowerCase();
+  return cosmeticTypes.filter(c => {
+    if (c.guid === currentGuid) return true;
+    if (slotType && c.slotType !== slotType) return false;
+    if (!q) return true;
+    return c.name.toLowerCase().includes(q);
+  });
+}
+
+function cosmeticComboId(bpIndex, cosIndex) { return `cosmetic-combo-${bpIndex}-${cosIndex}`; }
+
+function cosmeticComboHtml(bp, cos) {
+  const current = cosmeticTypes.find(c => c.guid === cos.guid);
+  const label = current ? cosmeticOptionLabel(current) : (cos.name || '');
+  return `
+    <div class="module-combo" id="${cosmeticComboId(bp.index, cos.index)}">
+      <input type="text" class="type-search" autocomplete="off" placeholder="Search ${escapeHtml(cos.slotType || 'cosmetics')}..."
+        value="${escapeHtml(label)}"
+        data-bp="${bp.index}" data-cos="${cos.index}" data-guid="${escapeHtml(cos.guid || '')}"
+        data-slottype="${escapeHtml(cos.slotType || '')}"
+        oninput="onCosmeticComboInput(this)" onfocus="onCosmeticComboFocus(this)" />
+      <div class="module-combo-list" style="display:none"></div>
+    </div>`;
+}
+
+function renderCosmeticComboList(input, query) {
+  const bpIndex = parseInt(input.dataset.bp, 10);
+  const cosIndex = parseInt(input.dataset.cos, 10);
+  const slotType = input.dataset.slottype || '';
+  const currentGuid = input.dataset.guid;
+  const list = input.nextElementSibling;
+  const options = filteredCosmeticOptions(query, slotType, currentGuid);
+  if (options.length === 0) {
+    list.innerHTML = '<div class="module-combo-empty">No matching cosmetics</div>';
+  } else {
+    list.innerHTML = options.map(c => {
+      const cls = 'module-combo-option' + (c.guid === currentGuid ? ' current' : '');
+      return `<div class="${cls}" data-guid="${escapeHtml(c.guid)}" onmousedown="onCosmeticComboPick(event, ${bpIndex}, ${cosIndex})">${escapeHtml(cosmeticOptionLabel(c))}</div>`;
+    }).join('');
+  }
+  list.style.display = 'block';
+  positionComboList(input, list);
+}
+
+function onCosmeticComboInput(input) { renderCosmeticComboList(input, input.value); }
+
+function onCosmeticComboFocus(input) {
+  input.select();
+  renderCosmeticComboList(input, '');
+}
+
+function onCosmeticComboPick(evt, bpIndex, cosIndex) {
+  const guid = evt.currentTarget.dataset.guid;
+  const combo = document.getElementById(cosmeticComboId(bpIndex, cosIndex));
+  const input = combo.querySelector('input.type-search');
+  const list = combo.querySelector('.module-combo-list');
+  const picked = cosmeticTypes.find(c => c.guid === guid);
+  input.value = picked ? cosmeticOptionLabel(picked) : '';
+  input.dataset.guid = guid;
+  list.style.display = 'none';
+  swapCosmetic(bpIndex, cosIndex, guid);
+}
+
+async function swapCosmetic(bpIndex, cosIndex, guid) {
+  try {
+    const r = await api(`/api/swapCosmetic?blueprintIndex=${bpIndex}&cosmeticIndex=${cosIndex}&cosmeticGuid=${encodeURIComponent(guid)}`, 'POST');
+    setStatus(r.ok ? `Cosmetic changed to "${r.name}".` : 'Cosmetic swap did not stick - check the MelonLoader console.');
+    await loadBlueprints();
+  } catch (e) { setStatus('Cosmetic swap failed: ' + e.message, true); }
+}
+
+async function resetCosmetic(bpIndex, cosIndex) {
+  try {
+    const r = await api(`/api/resetCosmetic?blueprintIndex=${bpIndex}&cosmeticIndex=${cosIndex}`, 'POST');
+    setStatus(r.ok ? 'Cosmetic reset to original.' : 'Reset did not succeed.');
+    await loadBlueprints();
+  } catch (e) { setStatus('Reset failed: ' + e.message, true); }
+}
+
+// "Change Base Item" combo: same searchable-combobox pattern as the module
+// picker above. Candidates come from two merged sources:
+//   1. The server's full item template catalog (/api/itemTemplates,
+//      loaded once into itemTemplateCatalog) - every on-foot weapon
+//      template the game has, not just ones you own. Ship components come
+//      back from that same endpoint with category=null on purpose (see
+//      RefreshItemTemplateCatalog in EditorMod.cs) since there's no
+//      confirmed data yet for sorting the 31 AllShipComponents entries into
+//      their 8 real in-game categories - a wrong guess there could let you
+//      swap e.g. a Reactor template into an Engine slot with no warning.
+//   2. Every OWNED item's templateGuid in the same category, same as
+//      before - this is what still covers ship components until (1) can
+//      confidently cover them too, and is harmless extra coverage for
+//      weapons where it overlaps with the catalog.
+let itemTemplateCatalog = []; // [{guid, name, category, typeName}]
+
+// Server-side /api/itemTemplates already excludes these (see
+// NonWeaponToolNames in EditorMod.cs) - mirrored here too so an owned tool
+// blueprint (source #2 below) can't sneak back in through the merge either.
+// Kept in sync with the server list: "Multi-tool" (hyphen, matching the
+// game's real string - the old space version silently never matched) and
+// "Expendable Minigun" (a real consumable, not a selectable base weapon).
+const NON_WEAPON_TOOL_NAMES = new Set(['Multi-tool', 'Mining Laser', 'Minigun', 'Expendable Minigun']);
+
+async function loadItemTemplateCatalog() {
+  itemTemplateCatalog = await api('/api/itemTemplates');
+}
+
+function itemTemplateComboId(bpIndex) { return `item-template-combo-${bpIndex}`; }
+
+function templateCandidatesFor(bp) {
+  const byGuid = new Map();
+  itemTemplateCatalog.forEach(t => {
+    if (t.category !== bp.category) return;
+    if (!t.guid || t.guid === bp.templateGuid) return;
+    byGuid.set(t.guid, t.name || t.guid);
+  });
+  (lastBlueprintsData || []).forEach(other => {
+    if (other.category !== bp.category) return;
+    if (!other.templateGuid || other.templateGuid === bp.templateGuid) return;
+    if (NON_WEAPON_TOOL_NAMES.has(other.originalName || other.name)) return;
+    // Prefer the OTHER item's original/base name over its current (possibly
+    // custom-renamed) display name - same reasoning as the combo's own value
+    // below, so a renamed item you own doesn't pollute this list with its
+    // nickname instead of its real type.
+    if (!byGuid.has(other.templateGuid)) byGuid.set(other.templateGuid, other.originalName || other.name || other.templateGuid);
+  });
+  return Array.from(byGuid, ([templateGuid, name]) => ({ templateGuid, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Lives where the "was X item" tag used to sit, right in the title row -
+// combining "what type is this really" with "change what type it is" into
+// one control instead of two. Deliberately shows bp.originalName (the
+// base/template name), NOT bp.name (the current, possibly custom-renamed
+// display name) - so switching base item never starts from your nickname.
+function itemTemplateComboHtml(bp) {
+  return `
+    <div class="module-combo item-template-combo" id="${itemTemplateComboId(bp.index)}">
+      <input type="text" class="type-search" autocomplete="off" placeholder="Change base item..."
+        title="Changes what item this blueprint fundamentally IS (e.g. Sideclip -> Scorpion), not just its rarity/level/modules. Shows the base/template name, not any custom name you've given it in-game. Weapons show every on-foot gun template the game has; other categories still only show items you already own until the full catalog's category mapping is confirmed."
+        value="${escapeHtml(bp.originalName || bp.name || '')}"
+        data-bp="${bp.index}"
+        oninput="onItemTemplateComboInput(this)" onfocus="onItemTemplateComboFocus(this)" />
+      <div class="module-combo-list" style="display:none"></div>
+    </div>`;
+}
+
+function renderItemTemplateComboList(input, query) {
+  const bpIndex = parseInt(input.dataset.bp, 10);
+  const bp = (lastBlueprintsData || []).find(b => b.index === bpIndex);
+  const list = input.nextElementSibling;
+  if (!bp) { list.style.display = 'none'; return; }
+  const q = (query || '').toLowerCase();
+  const options = templateCandidatesFor(bp).filter(o => !q || o.name.toLowerCase().includes(q));
+  if (options.length === 0) {
+    const msg = bp.category === 'Weapons'
+      ? 'No matching weapon templates'
+      : 'No other owned items in this category yet (full catalog for this category isn\'t confirmed yet)';
+    list.innerHTML = `<div class="module-combo-empty">${escapeHtml(msg)}</div>`;
+  } else {
+    list.innerHTML = options.map(o =>
+      `<div class="module-combo-option" data-guid="${escapeHtml(o.templateGuid)}" data-name="${escapeHtml(o.name)}" onmousedown="onItemTemplateComboPick(event, ${bpIndex})">${escapeHtml(o.name)}</div>`
+    ).join('');
+  }
+  list.style.display = 'block';
+  positionComboList(input, list);
+}
+
+function onItemTemplateComboInput(input) { renderItemTemplateComboList(input, input.value); }
+
+function onItemTemplateComboFocus(input) {
+  input.select();
+  renderItemTemplateComboList(input, '');
+}
+
+function onItemTemplateComboPick(evt, bpIndex) {
+  const guid = evt.currentTarget.dataset.guid;
+  const name = evt.currentTarget.dataset.name;
+  const combo = document.getElementById(itemTemplateComboId(bpIndex));
+  const input = combo.querySelector('input.type-search');
+  const list = combo.querySelector('.module-combo-list');
+  list.style.display = 'none';
+  changeItemTemplate(bpIndex, guid, name, input);
+}
+
+async function changeItemTemplate(bpIndex, templateGuid, name, input) {
+  if (!confirm(`Change this item's base type to "${name}"? Every module slot gets rebuilt to fit the new item. "Reset Everything" can undo this later (back to whatever this item was when you first opened the page this session), but there's no finer-grained undo just for this one change - go check it in the assembler UI afterward.`)) {
+    if (input) input.blur();
+    return;
+  }
+  try {
+    await api(`/api/changeItemTemplate?blueprintIndex=${bpIndex}&templateGuid=${encodeURIComponent(templateGuid)}`, 'POST');
+    setStatus(`Base item changed to "${name}".`);
+    await refreshAll();
+  } catch (e) { setStatus('Change base item failed: ' + e.message, true); }
+}
+
+// rangeStr, when given, is the server's "min-max" string (e.g. "Common-
+// Epic", shown next to the module as the "range: ..." tag) - restricts the
+// dropdown to just that span instead of all 4 rarities, so you can't pick
+// something the game itself would silently revert. Item-level rarity
+// dropdowns (blueprint/inventory cards) don't have a range concept and call
+// this with no second argument, same as before.
+function rarityOptions(current, rangeStr) {
+  let allowed = RARITIES;
+  if (rangeStr) {
+    const parts = rangeStr.split('-');
+    const lo = RARITIES.indexOf(parts[0]);
+    const hi = RARITIES.indexOf(parts[1]);
+    // RARITIES is ordered Legendary..Common (most rare first), so a lower
+    // array index means a HIGHER rarity - filter by that, not raw <=/>=.
+    if (lo !== -1 && hi !== -1) {
+      const top = Math.min(lo, hi), bottom = Math.max(lo, hi);
+      allowed = RARITIES.filter((r, i) => i >= top && i <= bottom);
+      // If this module's CURRENT rarity somehow already sits outside its
+      // own valid range (e.g. was set before this restriction existed),
+      // keep it in the list anyway - the dropdown should never hide what
+      // the module actually is right now, it should just stop you from
+      // picking something new that's out of range.
+      if (current && !allowed.includes(current)) allowed = allowed.concat([current]);
+    }
+  }
+  return allowed.map(r =>
+    `<option value="${r}" style="color:${RARITY_COLOR[r]};background:#0d141e" ${r === current ? 'selected' : ''}>${RARITY_DISPLAY[r] || r}</option>`
+  ).join('');
+}
+
+let lastBlueprintsData = null;
+
+// Module rows default to collapsed (per request) - this set holds the keys
+// of modules the user has explicitly expanded. Persists across re-renders
+// (upgrades, rarity/swap changes, refreshes) since it lives outside the
+// render function, so opening a module doesn't get reset by every action.
+const expandedModules = new Set();
+function moduleKey(bpIndex, modIndex) { return bpIndex + ':' + modIndex; }
+
+function toggleModule(bpIndex, modIndex) {
+  const key = moduleKey(bpIndex, modIndex);
+  if (expandedModules.has(key)) expandedModules.delete(key);
+  else expandedModules.add(key);
+  renderBlueprints(); // instant, no need to re-fetch from the server
+}
+
+// Cosmetic slots (scope, color, etc.) default to hidden behind a
+// "Customize" button, same collapsed-by-default pattern as expandedModules
+// above - persists across re-renders. Blueprint keys are plain indices,
+// inventory keys get an "inv:" prefix (same convention as invModuleKey) so
+// they can never collide with a blueprint's.
+const expandedCosmetics = new Set();
+
+function toggleCosmetics(key) {
+  if (expandedCosmetics.has(key)) expandedCosmetics.delete(key);
+  else expandedCosmetics.add(key);
+  renderBlueprints();
+  renderInventory();
+}
+
+// Lives in the shared sidebar now (spans both the Inventory and Blueprints
+// sections), so it expands/collapses modules in both lists at once rather
+// than just blueprints.
+function expandAllModules() {
+  if (lastBlueprintsData) {
+    lastBlueprintsData.forEach(bp => bp.modules.forEach(mod => expandedModules.add(moduleKey(bp.index, mod.index))));
+  }
+  if (lastInventoryData) {
+    lastInventoryData.forEach(item => item.modules.forEach(mod => expandedModules.add(invModuleKey(item.index, mod.index))));
+  }
+  renderBlueprints();
+  renderInventory();
+}
+
+function collapseAllModules() {
+  expandedModules.clear();
+  renderBlueprints();
+  renderInventory();
+}
+
+async function loadBlueprints() {
+  lastBlueprintsData = await api('/api/blueprints');
+  renderBlueprints();
+}
+
+function categoryAnchorId(group, category) {
+  return 'cat-' + (group + '-' + category).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
+
+// .toolbar and #status both stay pinned (position: sticky) while scrolling,
+// so a plain scrollIntoView lands the target's top edge right underneath
+// them - hidden, not just close. Measures their real current height instead
+// of hardcoding a pixel guess, so this stays correct even if that CSS
+// changes later, then scrolls with that much extra headroom (+12px
+// breathing room) above whatever was jumped to.
+function getStickyHeaderHeight() {
+  let total = 0;
+  const toolbar = document.querySelector('.toolbar');
+  const status = document.getElementById('status');
+  if (toolbar) total += toolbar.getBoundingClientRect().height;
+  if (status) total += status.getBoundingClientRect().height;
+  return total;
+}
+
+function scrollToElement(el) {
+  if (!el) return;
+  const y = el.getBoundingClientRect().top + window.pageYOffset - getStickyHeaderHeight() - 12;
+  window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+}
+
+// Currencies has two mutually-exclusive panels (the real one vs. the "no
+// currencies found" notice, toggled by loadCurrencies() depending on
+// whether you're actually in your hangar) - scroll to whichever one is
+// actually visible so the Currencies nav link never lands on a display:none
+// element and silently does nothing.
+function scrollToPanel(id, fallbackId) {
+  let el = document.getElementById(id);
+  if (el && getComputedStyle(el).display === 'none' && fallbackId) {
+    el = document.getElementById(fallbackId);
+  }
+  scrollToElement(el);
+}
+
+// Left navbar: built once from the static CATEGORY_LAYOUT (doesn't need
+// blueprint data), so it's available immediately and just scrolls to the
+// matching category-header id that renderBlueprints() assigns.
+function renderCategoryNav() {
+  const nav = document.getElementById('category-nav');
+  if (!nav) return;
+  nav.innerHTML = '';
+
+  const actions = document.createElement('div');
+  actions.className = 'nav-actions';
+  actions.innerHTML = `
+    <button onclick="expandAllModules()">Expand All Modules</button>
+    <button onclick="collapseAllModules()">Collapse All Modules</button>
+  `;
+  nav.appendChild(actions);
+
+  // Currencies and Inventory now render directly in the .content column (to
+  // the right of this sidebar, above the blueprint categories), same as
+  // requested - but that column can get long once blueprints are showing
+  // too, so these two links still earn their keep for jumping straight back
+  // up to them without scrolling.
+  const overviewLabel = document.createElement('div');
+  overviewLabel.className = 'nav-group-label';
+  overviewLabel.textContent = 'Overview';
+  nav.appendChild(overviewLabel);
+
+  const currenciesLink = document.createElement('a');
+  currenciesLink.href = '#currencies-panel';
+  currenciesLink.textContent = 'Currencies';
+  currenciesLink.onclick = (e) => {
+    e.preventDefault();
+    scrollToPanel('currencies-panel', 'currencies-hidden-notice');
+  };
+  nav.appendChild(currenciesLink);
+
+  const inventoryLink = document.createElement('a');
+  inventoryLink.href = '#inventory-panel';
+  inventoryLink.textContent = 'Inventory';
+  inventoryLink.onclick = (e) => {
+    e.preventDefault();
+    scrollToPanel('inventory-panel');
+  };
+  nav.appendChild(inventoryLink);
+
+  CATEGORY_LAYOUT.forEach(groupDef => {
+    const label = document.createElement('div');
+    label.className = 'nav-group-label';
+    label.textContent = groupDef.group;
+    nav.appendChild(label);
+    groupDef.categories.forEach(categoryName => {
+      const link = document.createElement('a');
+      link.href = '#' + categoryAnchorId(groupDef.group, categoryName);
+      link.textContent = categoryName;
+      link.onclick = (e) => {
+        e.preventDefault();
+        scrollToElement(document.getElementById(categoryAnchorId(groupDef.group, categoryName)));
+      };
+      nav.appendChild(link);
+    });
+  });
+}
+
+// Blueprints carry a real m_SlotIndex - confirmed to be a genuine, sparse,
+// player-arranged position (e.g. slots 1-5 empty with only slot 6 filled is
+// a real, observed case), not an auto-assigned dense counter. So the list
+// within a category is sorted by slot here rather than left in whatever
+// order the raw save-data list happens to return, and any gap gets a
+// placeholder row so the layout actually shows the empty space instead of
+// items just looking adjacent. maxSlotsByCategory (from
+// /api/blueprintSlotCapacities, m_BlueprintSlotCapacities.m_MaxSlots) lets
+// this also show gaps BEFORE the first owned item and AFTER the last one,
+// not just between two owned items - the full picture, slots 0..maxSlots-1.
+let maxSlotsByCategory = {}; // { "Weapons": 6, "Reactors": 4, ... }
+
+async function loadBlueprintSlotCapacities() {
+  const caps = await api('/api/blueprintSlotCapacities');
+  maxSlotsByCategory = {};
+  caps.forEach(c => { if (c.category) maxSlotsByCategory[c.category] = c.maxSlots; });
+}
+
+function withSlotOrderingAndGaps(items, categoryName) {
+  const sorted = items.slice().sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
+  const result = [];
+  const maxSlots = maxSlotsByCategory[categoryName];
+  if (typeof maxSlots === 'number' && sorted.length && typeof sorted[0].slot === 'number') {
+    for (let s = 0; s < sorted[0].slot; s++) result.push({ emptySlot: s });
+  }
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0) {
+      const prevSlot = sorted[i - 1].slot;
+      const curSlot = sorted[i].slot;
+      if (typeof prevSlot === 'number' && typeof curSlot === 'number') {
+        for (let s = prevSlot + 1; s < curSlot; s++) result.push({ emptySlot: s });
+      }
+    }
+    result.push(sorted[i]);
+  }
+  if (typeof maxSlots === 'number' && sorted.length) {
+    const lastSlot = sorted[sorted.length - 1].slot;
+    if (typeof lastSlot === 'number') {
+      for (let s = lastSlot + 1; s < maxSlots; s++) result.push({ emptySlot: s });
+    }
+  }
+  return result;
+}
+
+function buildEmptySlotCard(slotIndex) {
+  const card = document.createElement('div');
+  card.className = 'bp-card empty-slot';
+  card.innerHTML = `<div class="bp-title-row"><span class="bp-meta" style="margin-left:0;">slot ${slotIndex + 1} - empty</span></div>`;
+  return card;
+}
+
+function renderBlueprints() {
+  const data = lastBlueprintsData;
+  const root = document.getElementById('blueprints-root');
+  root.innerHTML = '';
+
+  if (!data || data.length === 0) {
+    root.innerHTML = '<div class="empty">No blueprints found - are you loaded into a save?</div>';
+    return;
+  }
+
+  CATEGORY_LAYOUT.forEach(groupDef => {
+    const groupHeader = document.createElement('div');
+    groupHeader.className = 'group-header';
+    groupHeader.textContent = groupDef.group;
+    root.appendChild(groupHeader);
+
+    groupDef.categories.forEach(categoryName => {
+      const items = data.filter(bp => bp.group === groupDef.group && bp.category === categoryName);
+
+      const catHeader = document.createElement('div');
+      catHeader.className = 'category-header';
+      catHeader.id = categoryAnchorId(groupDef.group, categoryName);
+      catHeader.textContent = categoryName;
+      root.appendChild(catHeader);
+
+      if (items.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'category-empty';
+        empty.textContent = 'No items in this category.';
+        root.appendChild(empty);
+        return;
+      }
+
+      withSlotOrderingAndGaps(items, categoryName).forEach(entry => {
+        root.appendChild(entry.emptySlot !== undefined ? buildEmptySlotCard(entry.emptySlot) : buildBlueprintCard(entry));
+      });
+    });
+  });
+
+  // Catch-all for any blueprint whose category we couldn't resolve, so nothing
+  // silently disappears from the list even if the category mapping is off.
+  const known = new Set();
+  CATEGORY_LAYOUT.forEach(g => g.categories.forEach(c => known.add(g.group + '|' + c)));
+  const leftover = data.filter(bp => !known.has(bp.group + '|' + bp.category));
+  if (leftover.length > 0) {
+    const header = document.createElement('div');
+    header.className = 'group-header';
+    header.textContent = 'Unsorted (category mapping unknown for these)';
+    root.appendChild(header);
+    leftover.forEach(bp => root.appendChild(buildBlueprintCard(bp)));
+  }
+}
+
+// Whether a module counts as "Upgradeable Features" or "Custom Modules" is
+// NOT a fixed slot-index split - it's each module's own m_IsBasicModule flag
+// (server-side, exposed here as mod.isBasic). Confirmed the count of basic
+// slots varies by item type: most weapons have 2, but Reactors only have 1
+// (see the "Dump Module Kinds" diagnostic). Custom-slot COUNT still depends
+// on rarity (0-3, see ResizeModulesForRarity server-side) on top of however
+// many basic slots the item has.
+
+// Trims to 3 decimal places without trailing zeros, so whole numbers show
+// as "150" not "150.000" and fractional stats (e.g. percentages stored as
+// 0.4) still show cleanly.
+function formatStatNumber(n) {
+  const rounded = Math.round(n * 1000) / 1000;
+  return rounded.toString();
+}
+
+// Real roll range for each of a module's tweakable stats, computed
+// server-side via the game's own CalculateRolledValue at roll=0/roll=1 (see
+// BuildTweakableRangesJson in EditorMod.cs) - confirmed via a real dump that
+// this genuinely varies per stat (e.g. "Total Damage" 150-200), not just a
+// fixed number. low===high just means that particular stat has no real
+// variation for this module/rarity/level combo, so those show as a plain
+// read-only tag instead of a slider (there's nothing to move).
+//
+// Each slider's raw position (0-1) IS the module's actual m_BaseValueRolls
+// entry, not a display-space value - dragging previews an estimated number
+// client-side (linear interpolation between low/high, matching every real
+// roll=0/roll=1 pair captured so far), and releasing (onchange) commits the
+// exact roll server-side via setModuleRoll/setInventoryModuleRoll, which
+// writes m_BaseValueRolls[tweakableIndex] directly and hands back the true
+// recomputed value from CalculateRolledValue to correct the display.
+// `kind` is 'bp' (blueprintIndex) or 'inv' (inventory index) so the same
+// renderer works for both blueprint and inventory module rows.
+function tweakableRangesHtml(mod, kind, parentIndex) {
+  if (!mod.tweakables || mod.tweakables.length === 0) return '';
+  const parts = mod.tweakables.map(t => {
+    const lo = formatStatNumber(t.low);
+    const hi = formatStatNumber(t.high);
+    if (t.low === t.high) {
+      return `<span class="tag" title="${escapeHtml(t.name || 'stat')} - this stat has no real variation for this module/rarity/level">${escapeHtml(t.name || 'stat')}: ${lo}</span>`;
+    }
+    const valId = `tw-val-${kind}-${parentIndex}-${mod.index}-${t.index}`;
+    const roll = typeof t.roll === 'number' ? t.roll : 0;
+    const current = typeof t.current === 'number' ? t.current : t.low;
+    return `
+      <div class="tweakable-slider-row" title="${escapeHtml(t.name || 'stat')} - range ${lo} &ndash; ${hi}, drag to set exactly where this stat's roll lands">
+        <span class="tweakable-slider-name">${escapeHtml(t.name || 'stat')}</span>
+        <input type="range" min="0" max="1" step="0.001" value="${roll}"
+          oninput="previewTweakableRoll(this, '${valId}', ${t.low}, ${t.high})"
+          onchange="commitTweakableRoll('${kind}', ${parentIndex}, ${mod.index}, ${t.index}, this.value, '${valId}')">
+        <span class="tag tweakable-slider-value" id="${valId}">${formatStatNumber(current)}</span>
+      </div>`;
+  }).join('');
+  return `<div class="module-row-stats">${parts}</div>`;
+}
+
+// Live number while dragging, before the write actually commits - purely a
+// client-side estimate (low + roll*(high-low)); commitTweakableRoll below
+// overwrites it with the server's authoritative value once the drag ends.
+function previewTweakableRoll(rangeEl, valId, low, high) {
+  const val = document.getElementById(valId);
+  if (!val) return;
+  const roll = parseFloat(rangeEl.value);
+  val.textContent = formatStatNumber(low + roll * (high - low));
+}
+
+async function commitTweakableRoll(kind, parentIndex, modIndex, tweakableIndex, rollStr, valId) {
+  const roll = parseFloat(rollStr);
+  const endpoint = kind === 'inv'
+    ? `/api/setInventoryModuleRoll?index=${parentIndex}&moduleIndex=${modIndex}&tweakableIndex=${tweakableIndex}&roll=${roll}`
+    : `/api/setModuleRoll?blueprintIndex=${parentIndex}&moduleIndex=${modIndex}&tweakableIndex=${tweakableIndex}&roll=${roll}`;
+  try {
+    const r = await api(endpoint, 'POST');
+    const val = document.getElementById(valId);
+    if (val && r.ok && typeof r.current === 'number') val.textContent = formatStatNumber(r.current);
+    setStatus(r.ok ? '[UNOFFICIAL] Stat roll set.' : 'Roll write did not stick - check the MelonLoader console for details.', !r.ok);
+    // Per Cameron: refresh after a slider commit, same as every other write
+    // action here (reroll, rarity, level, etc.) - re-fetches this card's
+    // real data instead of trusting the client-side preview number.
+    // expandedModules/expandedCosmetics are tracked separately from the
+    // fetched data, so this panel stays open across the re-render.
+    if (kind === 'inv') { await loadInventory(); } else { await loadBlueprints(); }
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+function renderModuleRow(bp, mod) {
+  const key = moduleKey(bp.index, mod.index);
+  const isExpanded = expandedModules.has(key);
+  const dotColor = RARITY_COLOR[mod.rarity] || '#7d8ea1';
+
+  // Upgradeable Features don't have an independently-settable rarity in the
+  // real game at all - they always match the item's own rarity (there's no
+  // rarity control for them in the assembler UI). Show a read-only tag
+  // instead of the editable dropdown Custom Modules get; the server also
+  // rejects a direct rarity write on one of these as a backstop.
+  const rarityControl = mod.isBasic
+    ? `<span class="tag" style="color:${RARITY_COLOR[mod.rarity] || 'inherit'}" title="Upgradeable Features always match the item's own rarity - change the item's rarity dropdown instead, it cascades automatically">${RARITY_DISPLAY[mod.rarity] || mod.rarity}</span>`
+    : `<select class="rarity-${mod.rarity}" onchange="applyRarity(${bp.index}, ${mod.index}, this.value)">
+         ${rarityOptions(mod.rarity, mod.rarityRange)}
+       </select>`;
+
+  let detailsHtml = '';
+  if (isExpanded) {
+    detailsHtml = `
+      <div class="module-row-details">
+        <div class="module-row-top">
+          ${rarityControl}
+          ${moduleComboHtml(bp, mod)}
+          <button onclick="rerollModule(${bp.index}, ${mod.index})" title="Rolls a brand new module for this slot the way the game itself would: weighted rarity draw, weighted type pick among compatible modules, and real value rolls where we could determine the real range">Reroll</button>
+          <button onclick="resetModule(${bp.index}, ${mod.index})" title="Restores this module's rarity, type, level, and rolls back to what it was when you first opened the web UI this session">Reset to Original</button>
+        </div>
+        ${tweakableRangesHtml(mod, 'bp', bp.index)}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="module-row" style="border-left-color:${dotColor}">
+      <div class="module-row-summary" onclick="toggleModule(${bp.index}, ${mod.index})">
+        <span class="module-toggle ${isExpanded ? 'expanded' : ''}">&#9656;</span>
+        <span class="rarity-dot" style="background:${dotColor};color:${dotColor}"></span>
+        <span class="module-name">${escapeHtml(mod.name)}</span>
+        <span class="tag module-level">${moduleLevelLabel(mod)}</span>
+        ${mod.rarityRange ? `<span class="tag" title="Valid rarity range for this module type - setting rarity outside this range may get silently reverted by the game">range: ${mod.rarityRange}</span>` : ''}
+      </div>
+      <div class="module-desc">${escapeHtml(mod.description)}</div>
+      ${detailsHtml}
+    </div>
+  `;
+}
+
+function buildBlueprintCard(bp) {
+  const card = document.createElement('div');
+  card.className = 'bp-card';
+
+  const upgradeable = bp.modules.filter(m => m.isBasic);
+  const custom = sortByRarityDesc(bp.modules.filter(m => !m.isBasic));
+
+  let modulesHtml = '';
+  if (upgradeable.length > 0) {
+    modulesHtml += `<div class="module-section-header">Upgradeable Features</div>`;
+    modulesHtml += upgradeable.map(mod => renderModuleRow(bp, mod)).join('');
+  }
+  if (custom.length > 0) {
+    modulesHtml += `<div class="module-section-header">Custom Modules</div>`;
+    modulesHtml += custom.map(mod => renderModuleRow(bp, mod)).join('');
+  }
+
+  // Cosmetic slots (scope, color, etc.) - only on-foot weapons have these;
+  // most items just get an empty array, so this whole block disappears for
+  // ships/components instead of showing an empty "Cosmetics" header. Hidden
+  // behind a "Customize" toggle by default (expandedCosmetics), same
+  // collapsed-by-default pattern as modules.
+  const cosmeticsKey = 'bp:' + bp.index;
+  const hasCosmetics = bp.cosmetics && bp.cosmetics.length > 0;
+  const cosmeticsExpanded = hasCosmetics && expandedCosmetics.has(cosmeticsKey);
+  let cosmeticsHtml = '';
+  if (cosmeticsExpanded) {
+    cosmeticsHtml = bp.cosmetics.map(cos => `
+      <div class="bp-header" style="margin-top:-4px;">
+        <span class="inline-section-label" title="CosmeticSelection slot - changes which cosmetic (e.g. scope) is plugged into this item, same mechanism the game itself uses">${escapeHtml(cos.slotType || 'Cosmetic')}:</span>
+        ${cosmeticComboHtml(bp, cos)}
+        <button onclick="resetCosmetic(${bp.index}, ${cos.index})" title="Restores this cosmetic slot back to what it was when you first opened the web UI this session">Reset</button>
+      </div>
+    `).join('');
+  }
+  const customizeButton = hasCosmetics
+    ? `<button onclick="toggleCosmetics('${cosmeticsKey}')" title="Scope/color/other cosmetic slots">${cosmeticsExpanded ? 'Hide Customize' : 'Customize'}</button>`
+    : '';
+
+  // Left edge of the card carries the item's rarity color, same signal the
+  // game gives you via colored rarity text (SUPERIOR in orange, etc.) - just
+  // pulled onto the card border here since these cards hold a lot more than
+  // a single list row.
+  card.style.borderLeftColor = RARITY_COLOR[bp.rarity] || '#253141';
+
+  card.innerHTML = `
+    <div class="bp-title-row">
+      <div class="bp-name"><span class="bp-index">[${bp.index + 1}]</span> ${escapeHtml(bp.name)}</div>
+      <select class="rarity-${bp.rarity}" onchange="applyRarity(${bp.index}, -1, this.value)">
+        ${rarityOptions(bp.rarity)}
+      </select>
+      <span class="level-badge"><span class="lv-label">Lv</span>${bp.level}</span>
+      <span class="bp-meta">slot ${typeof bp.slot === 'number' ? bp.slot + 1 : bp.slot} &middot; ${bp.guid || ''}</span>
+    </div>
+    <div class="bp-actions-row">
+      <button onclick="upgradeLevel(${bp.index}, -1)" ${bp.upgradeable === false ? 'disabled title="Already at max level"' : ''}>Upgrade Level</button>
+      <span class="inline-section-label" title="Direct level write - unlike Upgrade Level, this can go down as well as up, and skips the official upgrade path entirely">Set level:</span>
+      <button class="stepper-btn" onclick="setBlueprintLevel(${bp.index}, ${Math.max(0, bp.level - 1)})" ${bp.level <= 0 ? 'disabled title="Already at minimum level"' : 'title="Decrease level by 1 (direct write)"'}>&minus;</button>
+      <input type="number" id="bp-level-input-${bp.index}" placeholder="${bp.level}" style="width:56px;">
+      <button class="stepper-btn" onclick="setBlueprintLevel(${bp.index}, ${bp.level + 1})" ${bp.upgradeable === false ? 'disabled title="Already at max level"' : 'title="Increase level by 1 (direct write)"'}>+</button>
+      <button onclick="setBlueprintLevel(${bp.index})">Set</button>
+      <button onclick="resetAllModules(${bp.index})" title="Restores every submodule on this item back to what it was when you first opened the web UI this session">Reset All Modules</button>
+      ${customizeButton}
+      <select title="Debug - tucked away in a dropdown so they can't get bumped by accident" onchange="runItemDebug(${bp.index}, this.value); this.selectedIndex = 0;">
+        <option value="" selected disabled>Debug&hellip;</option>
+        <option value="deepDump">Deep Dump</option>
+        <option value="fixModuleCount">Fix Module Count</option>
+      </select>
+    </div>
+    <div class="bp-header" style="margin-top:10px;">
+      <span class="inline-section-label">Type:</span>
+      ${itemTemplateComboHtml(bp)}
+    </div>
+    ${cosmeticsHtml}
+    ${modulesHtml}
+  `;
+  return card;
+}
+
+async function debugDump(bpIndex) {
+  try {
+    await api(`/api/debugDump?blueprintIndex=${bpIndex}`);
+    setStatus(`Deep dump written for blueprint[${bpIndex}] - check the MelonLoader console or Editor_Log.txt.`);
+  } catch (e) { setStatus('Deep dump failed: ' + e.message, true); }
+}
+
+// Dispatcher for the per-card "Debug..." dropdown (Deep Dump / Fix Module
+// Count), same pattern as the global runDiagnostic dropdown in the toolbar.
+function runItemDebug(bpIndex, action) {
+  if (action === 'deepDump') debugDump(bpIndex);
+  else if (action === 'fixModuleCount') normalizeModuleCount(bpIndex);
+}
+
+async function searchModuleDatabase() {
+  try {
+    setStatus('Searching all loaded types for a module database - this may take a moment...');
+    await api('/api/searchModuleDatabase');
+    setStatus('Search complete - check the MelonLoader console or Editor_Log.txt for candidates.');
+  } catch (e) { setStatus('Search failed: ' + e.message, true); }
+}
+
+async function diagnoseUserData() {
+  try {
+    await api('/api/diagnoseUserData');
+    setStatus('Diagnostic complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Diagnostic failed: ' + e.message, true); }
+}
+
+async function dumpItemGenerator() {
+  try {
+    await api('/api/dumpItemGenerator');
+    setStatus('ItemGenerator dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpCategories() {
+  try {
+    await api('/api/dumpCategories');
+    setStatus('Category dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpModuleCompatibility() {
+  try {
+    await api('/api/dumpModuleCompatibility');
+    setStatus('Module compatibility dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpModuleKinds() {
+  try {
+    await api('/api/dumpModuleKinds');
+    setStatus('Module kinds dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpModuleValueRangeDiscovery() {
+  try {
+    await api('/api/dumpModuleValueRangeDiscovery');
+    setStatus('Module value range dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpItemTemplateDiscovery() {
+  try {
+    await api('/api/dumpItemTemplateDiscovery');
+    setStatus('Item template discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpScopeAttachmentDiscovery() {
+  try {
+    await api('/api/dumpScopeAttachmentDiscovery');
+    setStatus('Scope/attachment discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpCosmeticsScopeDiscovery() {
+  try {
+    await api('/api/dumpCosmeticsScopeDiscovery');
+    setStatus('Cosmetics/scope discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpCosmeticSelectionDiscovery() {
+  try {
+    await api('/api/dumpCosmeticSelectionDiscovery');
+    setStatus('Cosmetic selection discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpWeaponShipTemplateCatalog() {
+  try {
+    await api('/api/dumpWeaponShipTemplateCatalog');
+    setStatus('Weapon/ship template catalog dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpInventoryDiscovery() {
+  try {
+    await api('/api/dumpInventoryDiscovery');
+    setStatus('Inventory discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpBlueprintOrderingDiscovery() {
+  try {
+    await api('/api/dumpBlueprintOrderingDiscovery');
+    setStatus('Blueprint ordering dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpConsumableCatalogDiscovery() {
+  try {
+    await api('/api/dumpConsumableCatalogDiscovery');
+    setStatus('Consumable/pickup catalog discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpConsumableFilterDebug() {
+  try {
+    await api('/api/dumpConsumableFilterDebug');
+    setStatus('Consumable filter debug dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpBlueprintLevelCapDiscovery() {
+  try {
+    await api('/api/dumpBlueprintLevelCapDiscovery');
+    setStatus('Blueprint level cap discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpArtifactSystemDiscovery() {
+  try {
+    await api('/api/dumpArtifactSystemDiscovery');
+    setStatus('Artifact system discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpHotbarGameObjectDiscovery() {
+  try {
+    await api('/api/dumpHotbarGameObjectDiscovery');
+    setStatus('Hotbar GameObject discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpPickupSystemDiscovery() {
+  try {
+    await api('/api/dumpPickupSystemDiscovery');
+    setStatus('Pickup system discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpPlayerPickupableItemHandlerDiscovery() {
+  try {
+    await api('/api/dumpPlayerPickupableItemHandlerDiscovery');
+    setStatus('PlayerPickupableItemHandler discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function tryRefreshHeldItem() {
+  try {
+    await api('/api/tryRefreshHeldItem');
+    setStatus('RefreshHeldItem() called on every live handler - check the MelonLoader console or Editor_Log.txt for before/after, and check in-game whether the hotbar updated.');
+  } catch (e) { setStatus('Refresh failed: ' + e.message, true); }
+}
+
+async function dumpHotbarUIDiscovery() {
+  try {
+    await api('/api/dumpHotbarUIDiscovery');
+    setStatus('Hotbar UI discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpHotbarUIByValueDiscovery() {
+  try {
+    await api('/api/dumpHotbarUIByValueDiscovery');
+    setStatus('Hotbar UI by-value discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function dumpHotbarUIByReferenceDiscovery() {
+  try {
+    await api('/api/dumpHotbarUIByReferenceDiscovery');
+    setStatus('Hotbar UI by-reference discovery dump complete - check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Dump failed: ' + e.message, true); }
+}
+
+async function startHotbarRefreshTrace() {
+  try {
+    await api('/api/startHotbarRefreshTrace');
+    setStatus('Hotbar refresh trace started - do something in-game that should refresh the hotbar, then check the MelonLoader console or Editor_Log.txt.');
+  } catch (e) { setStatus('Start failed: ' + e.message, true); }
+}
+
+async function stopHotbarRefreshTrace() {
+  try {
+    await api('/api/stopHotbarRefreshTrace');
+    setStatus('Hotbar refresh trace stopped.');
+  } catch (e) { setStatus('Stop failed: ' + e.message, true); }
+}
+
+function runDiagnostic(name) {
+  if (name === 'searchModuleDatabase') searchModuleDatabase();
+  else if (name === 'diagnoseUserData') diagnoseUserData();
+  else if (name === 'dumpItemGenerator') dumpItemGenerator();
+  else if (name === 'dumpCategories') dumpCategories();
+  else if (name === 'dumpModuleCompatibility') dumpModuleCompatibility();
+  else if (name === 'dumpModuleKinds') dumpModuleKinds();
+  else if (name === 'dumpModuleValueRangeDiscovery') dumpModuleValueRangeDiscovery();
+  else if (name === 'dumpItemTemplateDiscovery') dumpItemTemplateDiscovery();
+  else if (name === 'dumpScopeAttachmentDiscovery') dumpScopeAttachmentDiscovery();
+  else if (name === 'dumpCosmeticsScopeDiscovery') dumpCosmeticsScopeDiscovery();
+  else if (name === 'dumpCosmeticSelectionDiscovery') dumpCosmeticSelectionDiscovery();
+  else if (name === 'dumpWeaponShipTemplateCatalog') dumpWeaponShipTemplateCatalog();
+  else if (name === 'dumpInventoryDiscovery') dumpInventoryDiscovery();
+  else if (name === 'dumpArtifactSystemDiscovery') dumpArtifactSystemDiscovery();
+  else if (name === 'dumpBlueprintOrderingDiscovery') dumpBlueprintOrderingDiscovery();
+  else if (name === 'dumpConsumableCatalogDiscovery') dumpConsumableCatalogDiscovery();
+  else if (name === 'dumpConsumableFilterDebug') dumpConsumableFilterDebug();
+  else if (name === 'dumpBlueprintLevelCapDiscovery') dumpBlueprintLevelCapDiscovery();
+  else if (name === 'dumpHotbarGameObjectDiscovery') dumpHotbarGameObjectDiscovery();
+  else if (name === 'dumpPickupSystemDiscovery') dumpPickupSystemDiscovery();
+  else if (name === 'dumpPlayerPickupableItemHandlerDiscovery') dumpPlayerPickupableItemHandlerDiscovery();
+  else if (name === 'tryRefreshHeldItem') tryRefreshHeldItem();
+  else if (name === 'dumpHotbarUIDiscovery') dumpHotbarUIDiscovery();
+  else if (name === 'dumpHotbarUIByValueDiscovery') dumpHotbarUIByValueDiscovery();
+  else if (name === 'dumpHotbarUIByReferenceDiscovery') dumpHotbarUIByReferenceDiscovery();
+  else if (name === 'startHotbarRefreshTrace') startHotbarRefreshTrace();
+  else if (name === 'stopHotbarRefreshTrace') stopHotbarRefreshTrace();
+}
+
+async function upgradeLevel(bpIndex, modIndex) {
+  try {
+    const r = await api(`/api/upgradeLevel?blueprintIndex=${bpIndex}&moduleIndex=${modIndex}`, 'POST');
+    setStatus(r.ok ? 'Level upgraded.' : 'Upgrade did not succeed (maxed out, or not enough currency).');
+    await loadBlueprints();
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+// explicitLevel lets the +/- steppers set an exact target level without
+// touching the number input at all; omit it (or leave the input blank) to
+// fall back to whatever's typed in the box, same as before.
+async function setBlueprintLevel(bpIndex, explicitLevel) {
+  let level;
+  if (typeof explicitLevel === 'number') {
+    level = explicitLevel;
+  } else {
+    const input = document.getElementById(`bp-level-input-${bpIndex}`);
+    level = input && input.value !== '' ? parseInt(input.value, 10) : NaN;
+  }
+  if (isNaN(level) || level < 0) { setStatus('Enter a level (0 or higher) first.', true); return; }
+  try {
+    const r = await api(`/api/setLevel?blueprintIndex=${bpIndex}&level=${level}`, 'POST');
+    setStatus(r.ok ? '[UNOFFICIAL] Level set.' : 'Level write did not stick - check the MelonLoader console for details.', !r.ok);
+    await loadBlueprints();
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+async function applyRarity(bpIndex, modIndex, rarity) {
+  try {
+    const r = await api(`/api/setRarity?blueprintIndex=${bpIndex}&moduleIndex=${modIndex}&rarity=${rarity}`, 'POST');
+    setStatus(r.ok ? '[UNOFFICIAL] Rarity set.' : 'Rarity write did not stick - check the MelonLoader console for details.', !r.ok);
+    await loadBlueprints();
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+async function swapModule(bpIndex, modIndex, guid) {
+  if (!guid) return;
+  try {
+    const r = await api(`/api/swapModule?blueprintIndex=${bpIndex}&moduleIndex=${modIndex}&moduleGuid=${encodeURIComponent(guid)}`, 'POST');
+    setStatus(`[UNOFFICIAL] Module swapped to "${r.name || guid}" - check it in the assembler UI.`);
+    await loadBlueprints();
+  } catch (e) { setStatus('Swap failed: ' + e.message, true); }
+}
+
+async function rerollModule(bpIndex, modIndex) {
+  try {
+    const r = await api(`/api/rerollModule?blueprintIndex=${bpIndex}&moduleIndex=${modIndex}`, 'POST');
+    setStatus(r.ok ? `Rerolled to "${r.name}" (${r.rarity}).` : 'Reroll did not fully stick - check the MelonLoader console for details.', !r.ok);
+    await loadBlueprints();
+  } catch (e) { setStatus('Reroll failed: ' + e.message, true); }
+}
+
+async function resetModule(bpIndex, modIndex) {
+  try {
+    const r = await api(`/api/resetModule?blueprintIndex=${bpIndex}&moduleIndex=${modIndex}`, 'POST');
+    setStatus(r.ok ? 'Module reset to original.' : 'Reset did not fully stick - check the MelonLoader console for details.', !r.ok);
+    await loadBlueprints();
+  } catch (e) { setStatus('Reset failed: ' + e.message, true); }
+}
+
+async function normalizeModuleCount(bpIndex) {
+  try {
+    const r = await api(`/api/normalizeModuleCount?blueprintIndex=${bpIndex}`, 'POST');
+    setStatus(r.changed ? `Module count fixed: ${r.before} -> ${r.after}.` : `Already correct (${r.after} module(s)).`);
+    await loadBlueprints();
+  } catch (e) { setStatus('Fix failed: ' + e.message, true); }
+}
+
+async function resetAllModules(bpIndex) {
+  try {
+    const r = await api(`/api/resetAllModules?blueprintIndex=${bpIndex}`, 'POST');
+    setStatus(`Reset ${r.resetCount}/${r.moduleCount} module(s) to original.`);
+    await loadBlueprints();
+  } catch (e) { setStatus('Reset failed: ' + e.message, true); }
+}
+
+// Global reset - every item's rarity/level, every module's type/rarity/
+// level/rolls, and every currency amount, back to whatever they were the
+// first time this session ever saw them (i.e. when the web UI first loaded/
+// refreshed - as close to "the game's original values" as this mod can
+// observe). Destructive across everything at once, so confirm first.
+async function resetEverything() {
+  if (!confirm('Reset EVERY item, module, and currency back to what they were when you first opened this page this session? This cannot be undone.')) return;
+  try {
+    const r = await api('/api/resetEverything', 'POST');
+    setStatus(`Reset everything: ${r.itemsTouched} item(s), ${r.modulesReset} module(s), ${r.currenciesReset} currency value(s) restored.`);
+    await refreshAll();
+  } catch (e) { setStatus('Reset Everything failed: ' + e.message, true); }
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// A combo's option list (.module-combo-list) is position:fixed, anchored to
+// the actual browser viewport (not the page) and positioned/sized entirely
+// here rather than via static CSS. Two earlier attempts still let it run off
+// the bottom of the window: first a flat downward-only CSS rule, then a
+// version that flipped to open upward when there was "more room" above than
+// below - but "more room" doesn't mean "enough room", so on a short window
+// neither direction had the full 280px and the list still got clipped.
+// Fixed positioning plus clamping max-height to whatever space is actually
+// available in the chosen direction guarantees the whole box (or its own
+// internal scrollbar, for a still-taller list) always fits on screen.
+// Called right after a list is shown/repopulated by every render*ComboList
+// function. Since position:fixed doesn't track page scroll, a scroll/resize
+// listener below just closes any open list rather than trying to keep it
+// glued to a moving input.
+function positionComboList(input, list) {
+  const rect = input.getBoundingClientRect();
+  const listMaxHeight = 280; // matches .module-combo-list's default CSS max-height
+  const margin = 8; // breathing room from the viewport edge
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+
+  list.style.left = rect.left + 'px';
+  list.style.width = rect.width + 'px';
+
+  if (spaceBelow >= spaceAbove) {
+    list.style.top = (rect.bottom + 2) + 'px';
+    list.style.bottom = 'auto';
+    list.style.maxHeight = Math.max(80, Math.min(listMaxHeight, spaceBelow - margin)) + 'px';
+  } else {
+    list.style.bottom = (window.innerHeight - rect.top + 2) + 'px';
+    list.style.top = 'auto';
+    list.style.maxHeight = Math.max(80, Math.min(listMaxHeight, spaceAbove - margin)) + 'px';
+  }
+}
+
+// position:fixed lists don't move when the page scrolls (they're anchored to
+// the viewport, not the input), so left open during a scroll they'd drift
+// away from the input that spawned them. Simplest fix: close any open list
+// as soon as the page (or another ancestor, like the category nav sidebar)
+// scrolls - capture:true is needed to see scrolling in a nested scrollable
+// container at all, since 'scroll' doesn't bubble. That capture net also
+// catches the list's OWN internal scrollbar (.module-combo-list itself has
+// overflow-y:auto so it can show more than max-height's worth of options) -
+// without the target check below, scrolling inside the list closed it
+// instantly, i.e. scrolling in a long list didn't work at all.
+window.addEventListener('scroll', (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains('module-combo-list')) return;
+  document.querySelectorAll('.module-combo-list').forEach(list => { list.style.display = 'none'; });
+}, true);
+window.addEventListener('resize', () => {
+  document.querySelectorAll('.module-combo-list').forEach(list => { list.style.display = 'none'; });
+});
+
+// "3 / 5" instead of "lvl 3" - maxLevel comes from the module type's own
+// m_MaxUpgradeLevel_<Rarity> property (see GetModuleMaxLevel in
+// EditorMod.cs), which the server sends as -1 when it couldn't resolve the
+// module type at all (unrecognized guid) - falls back to just the level
+// number in that case rather than showing a bogus "/ -1".
+function moduleLevelLabel(mod) {
+  return (typeof mod.maxLevel === 'number' && mod.maxLevel >= 0) ? `${mod.level} / ${mod.maxLevel}` : `${mod.level}`;
+}
+
+// ---------- Inventory (the 3 loose items carried by the player, separate
+// from the assembler's blueprint storage - no slot/category system, just a
+// flat list). Mirrors the blueprint card UI as closely as reasonable since
+// it's the same underlying GeneratedItem shape (rarity, level, modules,
+// cosmetics all editable the same way), plus resourceAmount/ammoInMag which
+// blueprints don't have. Deliberately no "Change Base Item" here yet (out of
+// scope for this pass) and excluded from Reset Everything's amount/ammo
+// restoration (matches how currencies are already handled as their own
+// separate concern rather than folded into "item" resets).
+let lastInventoryData = null;
+
+async function loadInventory() {
+  lastInventoryData = await api('/api/inventory');
+  renderInventory();
+}
+
+// Fixed carry capacity (confirmed: always exactly 3 slots) - used so the
+// list always shows all 3 rows, same idea as blueprint slot capacities,
+// instead of only showing however many real items currently happen to be
+// filled.
+const INVENTORY_SLOT_COUNT = 3;
+
+function renderInventory() {
+  const root = document.getElementById('inventory-root');
+  if (!root) return;
+  root.innerHTML = '';
+  const data = lastInventoryData;
+  if (!data) {
+    root.innerHTML = '<div class="empty">No carried items found - please enter your hangar.</div>';
+    return;
+  }
+  // Always render all 3 slots - a missing array entry (fewer than 3 items
+  // came back) and a present-but-unresolvable one (isEmpty, a real
+  // InventoryItem with nothing meaningful in it) both get the same empty-
+  // slot placeholder, matching how blueprint slots already show gaps.
+  const slots = [];
+  for (let i = 0; i < INVENTORY_SLOT_COUNT; i++) {
+    const item = data[i];
+    slots.push(item && !item.isEmpty ? item : { emptySlot: i });
+  }
+  // Rendered highest slot number first (top to bottom: slot 3, slot 2, slot
+  // 1) - a copy, reversed for display only. item.index (used for every
+  // API call/data-* attribute inside buildInventoryCard) stays the real
+  // 0-based array position regardless of render order.
+  slots.slice().reverse().forEach(entry => {
+    root.appendChild(entry.emptySlot !== undefined ? buildEmptySlotCard(entry.emptySlot) : buildInventoryCard(entry));
+  });
+}
+
+// Reuses the same expandedModules Set as blueprints, but namespaced with an
+// "inv:" prefix so an inventory item's module keys can never collide with a
+// blueprint's (both index from 0).
+function invModuleKey(index, modIndex) { return 'inv:' + index + ':' + modIndex; }
+
+function toggleInventoryModule(index, modIndex) {
+  const key = invModuleKey(index, modIndex);
+  if (expandedModules.has(key)) expandedModules.delete(key);
+  else expandedModules.add(key);
+  renderInventory(); // instant, no need to re-fetch from the server
+}
+
+// Module combobox for an inventory slot - same filteredModuleOptions() logic
+// blueprints use (it's already generic over template/basic/current-guid), but
+// with its own DOM id namespace ("inv-module-combo-...") and its own pick/
+// input/focus handlers, since blueprint index and inventory index both start
+// at 0 and would otherwise produce colliding element ids on the same page.
+function invModuleComboId(index, modIndex) { return `inv-module-combo-${index}-${modIndex}`; }
+
+function inventoryModuleComboHtml(item, mod) {
+  const wantBasic = Boolean(mod.isBasic);
+  const current = moduleTypes.find(m => m.guid === mod.guid);
+  const label = current ? moduleOptionLabel(current) : (mod.name || '');
+  return `
+    <div class="module-combo" id="${invModuleComboId(item.index, mod.index)}">
+      <input type="text" class="type-search" autocomplete="off" placeholder="Search modules..."
+        value="${escapeHtml(label)}"
+        data-inv="${item.index}" data-mod="${mod.index}" data-guid="${escapeHtml(mod.guid || '')}"
+        data-template="${escapeHtml(item.templateGuid || '')}" data-basic="${wantBasic}"
+        oninput="onInvModuleComboInput(this)" onfocus="onInvModuleComboFocus(this)" />
+      <div class="module-combo-list" style="display:none"></div>
+    </div>`;
+}
+
+function renderInvModuleComboList(input, query) {
+  const invIndex = parseInt(input.dataset.inv, 10);
+  const modIndex = parseInt(input.dataset.mod, 10);
+  const templateGuid = input.dataset.template || '';
+  const wantBasic = input.dataset.basic === 'true';
+  const currentGuid = input.dataset.guid;
+  const list = input.nextElementSibling;
+  const options = filteredModuleOptions(query, templateGuid, wantBasic, currentGuid);
+  if (options.length === 0) {
+    list.innerHTML = '<div class="module-combo-empty">No matching modules</div>';
+  } else {
+    list.innerHTML = options.map(m => {
+      const cls = 'module-combo-option' + (m.guid === currentGuid ? ' current' : '');
+      return `<div class="${cls}" data-guid="${escapeHtml(m.guid)}" onmousedown="onInvModuleComboPick(event, ${invIndex}, ${modIndex})">${escapeHtml(moduleOptionLabel(m))}</div>`;
+    }).join('');
+  }
+  list.style.display = 'block';
+  positionComboList(input, list);
+}
+
+function onInvModuleComboInput(input) { renderInvModuleComboList(input, input.value); }
+
+function onInvModuleComboFocus(input) {
+  input.select();
+  renderInvModuleComboList(input, '');
+}
+
+function onInvModuleComboPick(evt, invIndex, modIndex) {
+  const guid = evt.currentTarget.dataset.guid;
+  const combo = document.getElementById(invModuleComboId(invIndex, modIndex));
+  const input = combo.querySelector('input.type-search');
+  const list = combo.querySelector('.module-combo-list');
+  const picked = moduleTypes.find(m => m.guid === guid);
+  input.value = picked ? moduleOptionLabel(picked) : '';
+  input.dataset.guid = guid;
+  list.style.display = 'none';
+  swapInventoryModule(invIndex, modIndex, guid);
+}
+
+// Same story for the cosmetic combobox - filteredCosmeticOptions() is already
+// generic, just needs its own id namespace/handlers here.
+function invCosmeticComboId(index, cosIndex) { return `inv-cosmetic-combo-${index}-${cosIndex}`; }
+
+function inventoryCosmeticComboHtml(item, cos) {
+  const current = cosmeticTypes.find(c => c.guid === cos.guid);
+  const label = current ? cosmeticOptionLabel(current) : (cos.name || '');
+  return `
+    <div class="module-combo" id="${invCosmeticComboId(item.index, cos.index)}">
+      <input type="text" class="type-search" autocomplete="off" placeholder="Search ${escapeHtml(cos.slotType || 'cosmetics')}..."
+        value="${escapeHtml(label)}"
+        data-inv="${item.index}" data-cos="${cos.index}" data-guid="${escapeHtml(cos.guid || '')}"
+        data-slottype="${escapeHtml(cos.slotType || '')}"
+        oninput="onInvCosmeticComboInput(this)" onfocus="onInvCosmeticComboFocus(this)" />
+      <div class="module-combo-list" style="display:none"></div>
+    </div>`;
+}
+
+function renderInvCosmeticComboList(input, query) {
+  const invIndex = parseInt(input.dataset.inv, 10);
+  const cosIndex = parseInt(input.dataset.cos, 10);
+  const slotType = input.dataset.slottype || '';
+  const currentGuid = input.dataset.guid;
+  const list = input.nextElementSibling;
+  const options = filteredCosmeticOptions(query, slotType, currentGuid);
+  if (options.length === 0) {
+    list.innerHTML = '<div class="module-combo-empty">No matching cosmetics</div>';
+  } else {
+    list.innerHTML = options.map(c => {
+      const cls = 'module-combo-option' + (c.guid === currentGuid ? ' current' : '');
+      return `<div class="${cls}" data-guid="${escapeHtml(c.guid)}" onmousedown="onInvCosmeticComboPick(event, ${invIndex}, ${cosIndex})">${escapeHtml(cosmeticOptionLabel(c))}</div>`;
+    }).join('');
+  }
+  list.style.display = 'block';
+  positionComboList(input, list);
+}
+
+function onInvCosmeticComboInput(input) { renderInvCosmeticComboList(input, input.value); }
+
+function onInvCosmeticComboFocus(input) {
+  input.select();
+  renderInvCosmeticComboList(input, '');
+}
+
+function onInvCosmeticComboPick(evt, invIndex, cosIndex) {
+  const guid = evt.currentTarget.dataset.guid;
+  const combo = document.getElementById(invCosmeticComboId(invIndex, cosIndex));
+  const input = combo.querySelector('input.type-search');
+  const list = combo.querySelector('.module-combo-list');
+  const picked = cosmeticTypes.find(c => c.guid === guid);
+  input.value = picked ? cosmeticOptionLabel(picked) : '';
+  input.dataset.guid = guid;
+  list.style.display = 'none';
+  swapInventoryCosmetic(invIndex, cosIndex, guid);
+}
+
+function renderInventoryModuleRow(item, mod) {
+  const key = invModuleKey(item.index, mod.index);
+  const isExpanded = expandedModules.has(key);
+  const dotColor = RARITY_COLOR[mod.rarity] || '#7d8ea1';
+
+  const rarityControl = mod.isBasic
+    ? `<span class="tag" style="color:${RARITY_COLOR[mod.rarity] || 'inherit'}" title="Upgradeable Features always match the item's own rarity - change the item's rarity dropdown instead, it cascades automatically">${RARITY_DISPLAY[mod.rarity] || mod.rarity}</span>`
+    : `<select class="rarity-${mod.rarity}" onchange="applyInventoryRarity(${item.index}, ${mod.index}, this.value)">
+         ${rarityOptions(mod.rarity, mod.rarityRange)}
+       </select>`;
+
+  let detailsHtml = '';
+  if (isExpanded) {
+    detailsHtml = `
+      <div class="module-row-details">
+        <div class="module-row-top">
+          ${rarityControl}
+          ${inventoryModuleComboHtml(item, mod)}
+          <button onclick="rerollInventoryModule(${item.index}, ${mod.index})" title="Rolls a brand new module for this slot the way the game itself would: weighted rarity draw, weighted type pick among compatible modules, and real value rolls where we could determine the real range">Reroll</button>
+          <button onclick="resetInventoryModule(${item.index}, ${mod.index})" title="Restores this module's rarity, type, level, and rolls back to what it was when you first opened the web UI this session">Reset to Original</button>
+        </div>
+        ${tweakableRangesHtml(mod, 'inv', item.index)}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="module-row" style="border-left-color:${dotColor}">
+      <div class="module-row-summary" onclick="toggleInventoryModule(${item.index}, ${mod.index})">
+        <span class="module-toggle ${isExpanded ? 'expanded' : ''}">&#9656;</span>
+        <span class="rarity-dot" style="background:${dotColor};color:${dotColor}"></span>
+        <span class="module-name">${escapeHtml(mod.name)}</span>
+        <span class="tag module-level">${moduleLevelLabel(mod)}</span>
+        ${mod.rarityRange ? `<span class="tag" title="Valid rarity range for this module type - setting rarity outside this range may get silently reverted by the game">range: ${mod.rarityRange}</span>` : ''}
+      </div>
+      <div class="module-desc">${escapeHtml(mod.description)}</div>
+      ${detailsHtml}
+    </div>
+  `;
+}
+
+// "Change Consumable" combo: same searchable-combobox pattern as "Change
+// Base Item" for blueprints (itemTemplateComboHtml above), but simpler -
+// consumables have no category system, so this is just the full server
+// catalog (/api/consumableTemplates, backed by
+// CraftablesLibrary.LazyUnlockToCraftable - see RefreshCraftableNames in
+// EditorMod.cs) minus whatever's already in this slot. Only ever rendered
+// for isConsumable items.
+let consumableTemplateCatalog = []; // [{guid, name}]
+
+async function loadConsumableTemplateCatalog() {
+  consumableTemplateCatalog = await api('/api/consumableTemplates');
+}
+
+function consumableComboId(index) { return `consumable-combo-${index}`; }
+
+function consumableComboHtml(item) {
+  return `
+    <div class="module-combo" id="${consumableComboId(item.index)}">
+      <input type="text" class="type-search" autocomplete="off" placeholder="Change consumable..."
+        value="${escapeHtml(item.name || '')}"
+        data-inv="${item.index}"
+        oninput="onConsumableComboInput(this)" onfocus="onConsumableComboFocus(this)" />
+      <div class="module-combo-list" style="display:none"></div>
+    </div>`;
+}
+
+function renderConsumableComboList(input, query) {
+  const invIndex = parseInt(input.dataset.inv, 10);
+  const item = (lastInventoryData || []).find(i => i.index === invIndex);
+  const list = input.nextElementSibling;
+  if (!item) { list.style.display = 'none'; return; }
+  const q = (query || '').toLowerCase();
+  const options = consumableTemplateCatalog
+    .filter(c => c.guid && c.guid !== item.guid)
+    .filter(c => !q || (c.name || '').toLowerCase().includes(q))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  if (options.length === 0) {
+    list.innerHTML = '<div class="module-combo-empty">No matching consumables</div>';
+  } else {
+    list.innerHTML = options.map(c =>
+      `<div class="module-combo-option" data-guid="${escapeHtml(c.guid)}" data-name="${escapeHtml(c.name)}" onmousedown="onConsumableComboPick(event, ${invIndex})">${escapeHtml(c.name)}</div>`
+    ).join('');
+  }
+  list.style.display = 'block';
+  positionComboList(input, list);
+}
+
+function onConsumableComboInput(input) { renderConsumableComboList(input, input.value); }
+
+function onConsumableComboFocus(input) {
+  input.select();
+  renderConsumableComboList(input, '');
+}
+
+function onConsumableComboPick(evt, invIndex) {
+  const guid = evt.currentTarget.dataset.guid;
+  const name = evt.currentTarget.dataset.name;
+  const combo = document.getElementById(consumableComboId(invIndex));
+  const list = combo.querySelector('.module-combo-list');
+  list.style.display = 'none';
+  swapConsumable(invIndex, guid, name);
+}
+
+async function swapConsumable(invIndex, guid, name) {
+  try {
+    await api(`/api/swapConsumable?index=${invIndex}&guid=${encodeURIComponent(guid)}`, 'POST');
+    setStatus(`Consumable changed to "${name}".`);
+    await refreshAll();
+  } catch (e) { setStatus('Change consumable failed: ' + e.message, true); }
+}
+
+function buildInventoryCard(item) {
+  const card = document.createElement('div');
+  card.className = 'bp-card';
+
+  // Consumables/craftables (med stims, ammo packs, personal shield, etc.)
+  // don't have rarity or a level in-game at all - only real gear (weapons,
+  // reactors, etc.) does. Confirmed server-side (isConsumable = true when
+  // m_TemplateGuid is empty, i.e. the item isn't a real GeneratedItem) -
+  // their real display name comes from a separate craftables catalog
+  // instead of the usual ResolvedName path, see RefreshCraftableNames in
+  // EditorMod.cs.
+  const hasGearData = !item.isConsumable;
+  const nameUnresolved = !item.name || item.name === '?';
+
+  const upgradeable = item.modules.filter(m => m.isBasic);
+  const custom = sortByRarityDesc(item.modules.filter(m => !m.isBasic));
+
+  let modulesHtml = '';
+  if (upgradeable.length > 0) {
+    modulesHtml += `<div class="module-section-header">Upgradeable Features</div>`;
+    modulesHtml += upgradeable.map(mod => renderInventoryModuleRow(item, mod)).join('');
+  }
+  if (custom.length > 0) {
+    modulesHtml += `<div class="module-section-header">Custom Modules</div>`;
+    modulesHtml += custom.map(mod => renderInventoryModuleRow(item, mod)).join('');
+  }
+
+  // Cosmetic slots - same as blueprints, only on-foot weapons tend to have
+  // these, so this block just disappears for items that have none. Hidden
+  // behind a "Customize" toggle by default, same as blueprints.
+  const cosmeticsKey = 'inv:' + item.index;
+  const hasCosmetics = item.cosmetics && item.cosmetics.length > 0;
+  const cosmeticsExpanded = hasCosmetics && expandedCosmetics.has(cosmeticsKey);
+  let cosmeticsHtml = '';
+  if (cosmeticsExpanded) {
+    cosmeticsHtml = item.cosmetics.map(cos => `
+      <div class="bp-header" style="margin-top:-4px;">
+        <span class="inline-section-label" title="CosmeticSelection slot - changes which cosmetic (e.g. scope) is plugged into this item, same mechanism the game itself uses">${escapeHtml(cos.slotType || 'Cosmetic')}:</span>
+        ${inventoryCosmeticComboHtml(item, cos)}
+        <button onclick="resetInventoryCosmetic(${item.index}, ${cos.index})" title="Restores this cosmetic slot back to what it was when you first opened the web UI this session">Reset</button>
+      </div>
+    `).join('');
+  }
+  const customizeButton = hasCosmetics
+    ? `<button onclick="toggleCosmetics('${cosmeticsKey}')" title="Scope/color/other cosmetic slots">${cosmeticsExpanded ? 'Hide Customize' : 'Customize'}</button>`
+    : '';
+
+  const originalNameHtml = item.originalName
+    ? ` <span class="tag" title="Original/template item name - you've renamed this one in-game">${escapeHtml(item.originalName)}</span>`
+    : '';
+
+  const displayName = nameUnresolved
+    ? `[${item.index + 1}] (name unresolved - try Deep Dump)`
+    : `[${item.index + 1}] ${escapeHtml(item.name)}`;
+
+  const rarityLevelHtml = hasGearData ? `
+      <select class="rarity-${item.rarity}" onchange="applyInventoryRarity(${item.index}, -1, this.value)">
+        ${rarityOptions(item.rarity)}
+      </select>
+      <span class="level-badge"><span class="lv-label">Lv</span>${item.level}</span>
+  ` : '';
+
+  // Per Cameron: don't allow level editing on a weapon while it's sitting in
+  // inventory (carried) - unlike blueprints, there's no BlueprintIsUpgradeable-
+  // style signal for a carried item, so there's no reliable way to know or
+  // enforce a real max level here. Rarity/modules/cosmetics stay editable
+  // (hasGearData still gates those below) - just level is locked down.
+  const setLevelRow = '';
+
+  const resetModulesButton = hasGearData
+    ? `<button onclick="resetAllInventoryModules(${item.index})" title="Restores every submodule on this item back to what it was when you first opened the web UI this session">Reset All Modules</button>`
+    : '';
+
+  // Consumables don't chamber ammo - m_AmmoInMag is meaningless for them
+  // (matches the same hasGearData gate rarity/level/modules already use).
+  const ammoRow = hasGearData ? `
+      <span class="inline-section-label" title="m_AmmoInMag">Ammo in mag:</span>
+      <input type="number" id="inv-ammo-input-${item.index}" placeholder="${item.ammoInMag}" style="width:64px;">
+      <button onclick="inventorySetAmmo(${item.index})">Set</button>
+  ` : '';
+
+  // Consumables only - swaps which entry from the CraftablesLibrary catalog
+  // this slot holds (e.g. Med EM-8 -> a different med stim/ammo pack/
+  // shield). Gear items already have this via the "Base item" combo below
+  // instead (different catalog, different field - m_TemplateGuid, not
+  // m_GUID).
+  const changeConsumableRow = item.isConsumable ? `
+    <div class="bp-header" style="margin-top:2px;">
+      <span class="inline-section-label" title="Changes which consumable this slot IS (its own m_GUID) - e.g. Med EM-8 -> Med Stim. Doesn't touch quantity.">Change consumable:</span>
+      ${consumableComboHtml(item)}
+    </div>
+  ` : '';
+
+  card.style.borderLeftColor = hasGearData ? (RARITY_COLOR[item.rarity] || '#253141') : '#253141';
+
+  card.innerHTML = `
+    <div class="bp-title-row">
+      <div class="bp-name">${displayName}</div>
+      ${originalNameHtml}
+      ${rarityLevelHtml}
+    </div>
+    <div class="bp-actions-row">
+      ${setLevelRow}
+      <span class="inline-section-label" title="m_ResourceAmount - ammo reserve/fuel/material amount for gear, or carried quantity for a stackable consumable (usually capped at 1 in-game, med stims up to 5 - not enforced here)">${hasGearData ? 'Resource amount' : 'Quantity'}:</span>
+      <input type="number" step="any" id="inv-amount-input-${item.index}" placeholder="${item.resourceAmount}" style="width:80px;">
+      <button onclick="inventorySetAmount(${item.index})">Set</button>
+      ${ammoRow}
+      <button onclick="resetInventoryItem(${item.index})" title="Restores this whole item - type, rarity, level, modules, and cosmetics - back to what it was when you first opened the web UI this session">Reset to Original</button>
+      ${resetModulesButton}
+      ${customizeButton}
+      <select title="Debug - tucked away in a dropdown so they can't get bumped by accident" onchange="runInventoryItemDebug(${item.index}, this.value); this.selectedIndex = 0;">
+        <option value="" selected disabled>Debug&hellip;</option>
+        <option value="deepDump">Deep Dump</option>
+      </select>
+    </div>
+    ${changeConsumableRow}
+    ${cosmeticsHtml}
+    ${modulesHtml}
+  `;
+  return card;
+}
+
+async function inventorySetAmount(index) {
+  const v = document.getElementById(`inv-amount-input-${index}`).value;
+  if (v === '') return;
+  try {
+    const r = await api(`/api/inventorySetAmount?index=${index}&amount=${encodeURIComponent(v)}`, 'POST');
+    setStatus(r.ok ? 'Resource amount set.' : 'Set did not stick - check the MelonLoader console.', !r.ok);
+    await loadInventory();
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+async function inventorySetAmmo(index) {
+  const v = document.getElementById(`inv-ammo-input-${index}`).value;
+  if (v === '') return;
+  try {
+    const r = await api(`/api/inventorySetAmmo?index=${index}&ammo=${encodeURIComponent(v)}`, 'POST');
+    setStatus(r.ok ? 'Ammo set.' : 'Set did not stick - check the MelonLoader console.', !r.ok);
+    await loadInventory();
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+// explicitLevel lets the +/- steppers set an exact target level without
+// touching the number input at all; omit it (or leave the input blank) to
+// fall back to whatever's typed in the box, same as before.
+async function inventorySetLevel(index, explicitLevel) {
+  let v;
+  if (typeof explicitLevel === 'number') {
+    v = String(explicitLevel);
+  } else {
+    v = document.getElementById(`inv-level-input-${index}`).value;
+    if (v === '') return;
+  }
+  try {
+    const r = await api(`/api/inventorySetLevel?index=${index}&level=${encodeURIComponent(v)}`, 'POST');
+    setStatus(r.ok ? '[UNOFFICIAL] Level set.' : 'Set did not stick - check the MelonLoader console.', !r.ok);
+    await loadInventory();
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+async function applyInventoryRarity(index, modIndex, rarity) {
+  try {
+    const r = await api(`/api/inventorySetRarity?index=${index}&moduleIndex=${modIndex}&rarity=${rarity}`, 'POST');
+    setStatus(r.ok ? '[UNOFFICIAL] Rarity set.' : 'Rarity write did not stick - check the MelonLoader console for details.', !r.ok);
+    await loadInventory();
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
+async function swapInventoryModule(index, modIndex, guid) {
+  if (!guid) return;
+  try {
+    const r = await api(`/api/inventorySwapModule?index=${index}&moduleIndex=${modIndex}&moduleGuid=${encodeURIComponent(guid)}`, 'POST');
+    setStatus(`[UNOFFICIAL] Module swapped to "${r.name || guid}".`);
+    await loadInventory();
+  } catch (e) { setStatus('Swap failed: ' + e.message, true); }
+}
+
+async function rerollInventoryModule(index, modIndex) {
+  try {
+    const r = await api(`/api/inventoryRerollModule?index=${index}&moduleIndex=${modIndex}`, 'POST');
+    setStatus(r.ok ? `Rerolled to "${r.name}" (${r.rarity}).` : 'Reroll did not fully stick - check the MelonLoader console for details.', !r.ok);
+    await loadInventory();
+  } catch (e) { setStatus('Reroll failed: ' + e.message, true); }
+}
+
+async function resetInventoryModule(index, modIndex) {
+  try {
+    const r = await api(`/api/inventoryResetModule?index=${index}&moduleIndex=${modIndex}`, 'POST');
+    setStatus(r.ok ? 'Module reset to original.' : 'Reset did not fully stick - check the MelonLoader console for details.', !r.ok);
+    await loadInventory();
+  } catch (e) { setStatus('Reset failed: ' + e.message, true); }
+}
+
+async function resetAllInventoryModules(index) {
+  try {
+    const r = await api(`/api/inventoryResetAllModules?index=${index}`, 'POST');
+    setStatus(`Reset ${r.resetCount}/${r.moduleCount} module(s) to original.`);
+    await loadInventory();
+  } catch (e) { setStatus('Reset failed: ' + e.message, true); }
+}
+
+async function swapInventoryCosmetic(index, cosIndex, guid) {
+  try {
+    const r = await api(`/api/inventorySwapCosmetic?index=${index}&cosmeticIndex=${cosIndex}&cosmeticGuid=${encodeURIComponent(guid)}`, 'POST');
+    setStatus(r.ok ? `Cosmetic changed to "${r.name}".` : 'Cosmetic swap did not stick - check the MelonLoader console.');
+    await loadInventory();
+  } catch (e) { setStatus('Cosmetic swap failed: ' + e.message, true); }
+}
+
+async function resetInventoryCosmetic(index, cosIndex) {
+  try {
+    const r = await api(`/api/inventoryResetCosmetic?index=${index}&cosmeticIndex=${cosIndex}`, 'POST');
+    setStatus(r.ok ? 'Cosmetic reset to original.' : 'Reset did not succeed.');
+    await loadInventory();
+  } catch (e) { setStatus('Reset failed: ' + e.message, true); }
+}
+
+async function inventoryDebugDump(index) {
+  try {
+    await api(`/api/inventoryDebugDump?index=${index}`);
+    setStatus(`Deep dump written for inventory[${index}] - check the MelonLoader console or Editor_Log.txt.`);
+  } catch (e) { setStatus('Deep dump failed: ' + e.message, true); }
+}
+
+async function resetInventoryItem(index) {
+  try {
+    const r = await api(`/api/inventoryResetItem?index=${index}`, 'POST');
+    setStatus(r.ok ? `Inventory[${index}] reset to original (modules: ${r.modulesReset}, cosmetics: ${r.cosmeticsReset}).` : 'Reset did not fully succeed - check the MelonLoader console.');
+    await loadInventory();
+  } catch (e) { setStatus('Reset failed: ' + e.message, true); }
+}
+
+// Dispatcher for the per-card inventory "Debug..." dropdown, same pattern as
+// the blueprint cards' runItemDebug.
+function runInventoryItemDebug(index, action) {
+  if (action === 'deepDump') inventoryDebugDump(index);
+}
+
+renderCategoryNav();
+refreshAll();
+setInterval(loadGameState, 3000); // keeps the panel in sync as you walk in/out of the hangar, without a full refresh
+</script>
+
+</body>
+</html>

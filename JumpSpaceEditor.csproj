@@ -1,0 +1,81 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>JumpSpaceEditor</AssemblyName>
+    <RootNamespace>JumpSpaceEditor</RootNamespace>
+
+    <!-- EDIT THIS: point at your Jump Space install folder -->
+    <GameDir>D:\SteamLibrary\steamapps\common\JumpSpace</GameDir>
+
+    <!-- Flatten build output to a single "build\" folder instead of the
+         default bin\Release\net6.0\ nesting - makes it easy to point at one
+         folder when copying/deploying. -->
+    <OutputPath>build\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="MelonLoader">
+      <HintPath>$(GameDir)\MelonLoader\net6\MelonLoader.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(GameDir)\MelonLoader\net6\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>$(GameDir)\MelonLoader\net6\Il2CppInterop.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>$(GameDir)\MelonLoader\Il2CppAssemblies\Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameDir)\MelonLoader\Il2CppAssemblies\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Jump Space uses the new Input System package, not legacy UnityEngine.Input -->
+    <Reference Include="Unity.InputSystem">
+      <HintPath>$(GameDir)\MelonLoader\Il2CppAssemblies\Unity.InputSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Wipes the entire build\ folder before every compile, so it's always a
+       full clean rebuild rather than an incremental one - no stale files can
+       ever linger in there. Hooked to CoreCompile (not just "Build") since
+       that's the actual compile step, guaranteeing this runs before anything
+       gets written back into the folder. -->
+  <Target Name="CleanOutputFolder" BeforeTargets="CoreCompile">
+    <RemoveDir Directories="$(OutputPath)" Condition="Exists('$(OutputPath)')" />
+    <!-- RemoveDir deletes the folder outright, but later steps in the build
+         (GenerateDepsFile in particular) assume the output folder already
+         exists and don't create it themselves - recreate it empty right away
+         so nothing downstream trips over a missing directory. -->
+    <MakeDir Directories="$(OutputPath)" />
+  </Target>
+
+  <!-- After every build, deletes whatever DLL is currently in the game's
+       Mods folder and drops in the freshly-built one, plus EditorUI.html
+       (kept alongside this .csproj). Means "dotnet build -c Release" alone
+       is enough - no manual copying. NOTE: the game has to be closed for
+       this to work, since a running MelonLoader instance keeps the old DLL
+       file locked and the delete/copy will fail while it's open. -->
+  <Target Name="DeployToModsFolder" AfterTargets="Build">
+    <ItemGroup>
+      <ModsFolderDll Include="$(GameDir)\Mods\$(AssemblyName).dll" />
+      <ModsFolderHtml Include="$(GameDir)\Mods\EditorUI.html" />
+    </ItemGroup>
+    <Delete Files="@(ModsFolderDll)" Condition="Exists('%(ModsFolderDll.Identity)')" />
+    <Delete Files="@(ModsFolderHtml)" Condition="Exists('%(ModsFolderHtml.Identity)')" />
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(GameDir)\Mods\" />
+    <Copy SourceFiles="$(ProjectDir)EditorUI.html" DestinationFolder="$(GameDir)\Mods\" Condition="Exists('$(ProjectDir)EditorUI.html')" />
+    <Message Importance="high" Text="Deployed JumpSpaceEditor.dll + EditorUI.html to $(GameDir)\Mods\" />
+  </Target>
+
+</Project>
