@@ -143,6 +143,23 @@
   button.warn:hover { box-shadow: 0 0 0 1px var(--warn) inset; }
   button.danger { border-color: var(--danger); color: var(--danger); }
   button.danger:hover { background: rgba(255, 92, 82, 0.12); box-shadow: 0 0 0 1px var(--danger) inset; }
+  /* Toolbar checkbox, not a button - styled to stand out (danger-colored
+     border) since it's a mode that relaxes several of this tool's own
+     safety limits, not a one-off action like everything else up here. */
+  .cheat-mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--danger);
+    border-radius: 6px;
+    color: var(--danger);
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .cheat-mode-toggle input[type="checkbox"] { accent-color: var(--danger); cursor: pointer; }
+  .cheat-mode-toggle.active { background: rgba(255, 92, 82, 0.14); box-shadow: 0 0 10px rgba(255, 92, 82, 0.3); }
   /* Small yellow keybind chip, matching the game's own bottom-bar key
      hints (e.g. the "F" / "Tab" badges next to Leave/View Loot Log). */
   .keybind {
@@ -494,6 +511,14 @@
      the item's own "Lv 12" level-badge, instead of the muted color every
      other .tag uses. */
   .tag.module-level { color: var(--text); }
+  /* Status effect tag (Rupture, Sear, etc.) - picked out in the accent
+     color with a cursor hint, since the whole point of this tag is the
+     hover tooltip explaining what that effect actually does. */
+  .tag.status-effect-tag {
+    color: var(--accent);
+    border-color: var(--accent-dim);
+    cursor: help;
+  }
 </style>
 </head>
 <body>
@@ -506,6 +531,10 @@
 <div class="toolbar">
   <button class="primary" onclick="refreshAll()">Refresh<span class="keybind">F5</span></button>
   <button class="warn" onclick="saveNow()">Save Now<span class="keybind">F6</span></button>
+  <label class="cheat-mode-toggle" title="Lets rarity, module level, and stat rolls go past what the game normally allows. Backs up your save automatically the moment you turn this on.">
+    <input type="checkbox" id="cheat-mode-checkbox" onchange="toggleCheatMode(this.checked)">
+    Cheat Mode
+  </label>
   <select id="diagnostics-select" title="Debug - tucked away in a dropdown so they can't get bumped by accident" onchange="runDiagnostic(this.value); this.selectedIndex = 0;">
     <option value="" selected disabled>Debug&hellip;</option>
     <option value="searchModuleDatabase">Search Module DB</option>
@@ -567,6 +596,13 @@
       <div id="inventory-root"><div class="empty">Loading...</div></div>
     </div>
 
+    <div class="panel" id="backups-panel">
+      <h2>Backups</h2>
+      <div class="panel-note">A backup is taken automatically the first time you save each session, and again right before every restore. Restoring only changes the file on disk - close and reopen your save (or restart the game) afterward to actually see it; your current session won't notice until then.</div>
+      <button onclick="createBackupNow()">Backup Now</button>
+      <div id="backups-root"><div class="empty">Loading...</div></div>
+    </div>
+
     <div id="blueprints-root"><div class="empty">Loading...</div></div>
     <div id="blueprints-hidden-notice" class="empty" style="display:none;">No blueprints found - please enter your hangar.</div>
   </div>
@@ -577,6 +613,119 @@
 const RARITY_DISPLAY = { Common: "Standard", Rare: "Refined", Epic: "Advanced", Legendary: "Superior" };
 const RARITY_COLOR = { Common: "#6ee78a", Rare: "#4fc3f7", Epic: "#c77dff", Legendary: "#ff7a52" };
 const RARITIES = ["Legendary", "Epic", "Rare", "Common"]; // top-to-bottom: most rare to most common
+
+// Cheat Mode: a session-scoped switch on the server (EditorMod.cs -
+// _cheatModeEnabled) that relaxes rarity-range/roll-ceiling/module-level
+// limits this tool normally enforces. Mirrored here so the UI can adjust
+// slider bounds, rarity dropdown contents, and disabled/greyed buttons
+// without a full page reload every time it's toggled. Matches the server's
+// own CheatModeRollCeiling constant (3.0 = 300%).
+let cheatModeEnabled = false;
+const CHEAT_MODE_ROLL_CEILING = 3;
+
+async function loadCheatMode() {
+  try {
+    const r = await api('/api/cheatMode');
+    cheatModeEnabled = !!r.enabled;
+  } catch (e) {
+    cheatModeEnabled = false;
+  }
+  const checkbox = document.getElementById('cheat-mode-checkbox');
+  const label = checkbox ? checkbox.closest('.cheat-mode-toggle') : null;
+  if (checkbox) checkbox.checked = cheatModeEnabled;
+  if (label) label.classList.toggle('active', cheatModeEnabled);
+}
+
+async function toggleCheatMode(wantEnabled) {
+  const checkbox = document.getElementById('cheat-mode-checkbox');
+  if (wantEnabled) {
+    if (!confirm('Enable Cheat Mode?\n\nThis lets rarity, module level, and stat rolls go past what the game normally allows for. A backup of your save is taken automatically the moment you confirm this, before anything else changes.\n\nOut-of-bounds values may behave unpredictably in-game, and the game itself might silently revert some of them.')) {
+      if (checkbox) checkbox.checked = false;
+      return;
+    }
+  }
+  try {
+    setStatus(wantEnabled ? 'Enabling Cheat Mode...' : 'Disabling Cheat Mode...');
+    const r = await api(`/api/cheatMode?enabled=${wantEnabled}`, 'POST');
+    cheatModeEnabled = !!r.enabled;
+    if (checkbox) checkbox.checked = cheatModeEnabled;
+    const label = checkbox ? checkbox.closest('.cheat-mode-toggle') : null;
+    if (label) label.classList.toggle('active', cheatModeEnabled);
+    setStatus(cheatModeEnabled
+      ? `Cheat Mode ON${r.backupName ? ' - backup saved as "' + r.backupName + '"' : ' - backup could not be created, check Editor_Log.txt'}.`
+      : 'Cheat Mode off.');
+    // Re-render everything - rarity dropdowns, level buttons, and roll
+    // sliders all read cheatModeEnabled at render time.
+    await Promise.all([loadBlueprints(), loadInventory()]);
+  } catch (e) {
+    if (checkbox) checkbox.checked = cheatModeEnabled;
+    setStatus('Cheat Mode toggle failed: ' + e.message, true);
+  }
+}
+
+// Plain-language explanations of what each status effect actually does in
+// the field (in-game tooltips describe them but are often unclear) -
+// summarized from a community write-up Cameron shared. Matched against a
+// module's own description text (see statusEffectTagsHtml below) so a
+// module that inflicts, say, Rupture gets a small hoverable tag explaining
+// what Rupture actually does, without needing any new backend/reflection
+// work - this is purely a client-side text match against the description
+// string the server already sends. "Chaos" is deliberately left out of this
+// dictionary - it's not a status effect on its own, just a note that
+// Chaos-tier modules apply weaker versions of these effects (e.g. Chaos
+// Fire's Sear is weaker than a Superior-tier Sear) - and "Chaos" as a plain
+// word is too likely to false-positive-match unrelated text anyway.
+const STATUS_EFFECT_INFO = {
+  "Breach": "Increases damage the target takes from ALL sources, including other status effects. Most noticeable on direct damage; barely noticeable on most status effects, but boosts Rupture significantly.",
+  "Sear": "Damage over time; duration depends on the module that applies it. Can't stack, but can be refreshed. Damages through shield and can land the killing blow.",
+  "Corrosion": "Adding stacks increases the damage of the current debuff, but does NOT refresh its duration. Can't damage through shield, can't land the killing blow.",
+  "Virus": "Damage over time based on the target's max HP. Can't stack or refresh - the previous application has to fully deplete before it can be reapplied. Can't damage through shield, but can land the killing blow.",
+  "Irradiation": "Makes the target twitch/glitch: disables attacks and interrupts ongoing or charging attacks. Not a full stun - the target can still move. Inconsistent on Spider Tanks, doesn't seem to work on Rocket Drones, and Corvettes/Missile Gunships mostly ignore it (though it does slow Corvette autocannon fire). On ships it can interrupt a Sniper Ship's boost. Can't damage through shield, can land the killing blow.",
+  "EMP": "Stacks 1-10, gradually slowing attack and movement speed as it stacks. At 10 stacks it consumes all stacks, stuns the target for 4 seconds, and deals burst damage based on the weapon's damage (boosted by on-foot damage buffs like Augmentations). Makes ships spin out and Gunships disengage; Corvettes mostly ignore it.",
+  "Rupture": "Deals damage over time based on the weapon's damage that procced it (some modules deal a fixed amount instead). Stacks ADD DURATION (6s each) rather than refreshing it, and every stack follows the damage of the ORIGINAL proc, not later higher-damage procs. Doesn't scale with critical hits; on shotguns only scales with per-pellet damage (not total blast damage). Does scale with Augmentations/artifacts. The only status effect that gets a noticeable boost from Breach. Can't damage through shield, can land the killing blow.",
+  "Disruption": "Reported to decrease the incoming damage of the affected target - unconfirmed, the source of this info didn't have a module with Disruption to test it directly."
+};
+
+// A couple of STATUS_EFFECT_INFO keys don't literally appear in every text
+// source we match against - the game's own module titles (see
+// STATIC_TITLE_ALIASES below) use "Radiation" where the community write-up
+// (and the in-game tooltip) calls the same effect "Irradiation". Without
+// this, a module whose live description is too vague to mention the effect
+// by name would only get tagged via its staticTitle, but "Radiation after
+// corrosion" etc. wouldn't word-match "Irradiation" at all.
+const STATUS_EFFECT_ALIASES = {
+  "Irradiation": ["Irradiation", "Radiation"],
+};
+
+// Finds every STATUS_EFFECT_INFO key that appears as a whole word in the
+// given text (case-insensitive) - e.g. matches "Rupture" but not
+// "Ruptured" or a name that happens to be a substring of something else.
+function findStatusEffectsInText(text) {
+  if (!text) return [];
+  const found = [];
+  for (const name of Object.keys(STATUS_EFFECT_INFO)) {
+    const words = STATUS_EFFECT_ALIASES[name] || [name];
+    if (words.some(w => new RegExp('\\b' + w + '\\b', 'i').test(text))) found.push(name);
+  }
+  return found;
+}
+
+// Matches against BOTH the live, level/rarity-dependent description text
+// AND the module's static canonical title (see staticTitle/
+// StaticModuleTitleByGuid in EditorMod.cs, sourced from JumpSaves) - the
+// static title is a second, more reliable signal since it's always the
+// game's own short identifier (e.g. "Sear chance on hit") regardless of
+// how the live description happens to phrase things, while the
+// description remains the fallback/primary source for modules whose guid
+// isn't in the static table yet.
+function statusEffectTagsHtml(mod) {
+  const combinedText = [mod.description, mod.staticTitle].filter(Boolean).join(' ');
+  const names = findStatusEffectsInText(combinedText);
+  if (names.length === 0) return '';
+  return names.map(name =>
+    `<span class="tag status-effect-tag" title="${escapeHtml(name)}: ${escapeHtml(STATUS_EFFECT_INFO[name])}">${escapeHtml(name)}</span>`
+  ).join('');
+}
 
 // The game displays Custom Modules sorted by rarity (highest first), NOT in
 // raw m_Modules array/index order - confirmed by the user in-game. Upgradeable
@@ -615,8 +764,8 @@ async function api(path, method) {
 async function refreshAll() {
   setStatus('Loading...');
   try {
-    await Promise.all([loadModuleTypes(), loadCosmeticTypes(), loadItemTemplateCatalog(), loadBlueprintSlotCapacities(), loadConsumableTemplateCatalog()]);
-    await Promise.all([loadBlueprints(), loadCurrencies(), loadGameState(), loadInventory()]);
+    await Promise.all([loadModuleTypes(), loadCosmeticTypes(), loadItemTemplateCatalog(), loadBlueprintSlotCapacities(), loadConsumableTemplateCatalog(), loadCheatMode()]);
+    await Promise.all([loadBlueprints(), loadCurrencies(), loadGameState(), loadInventory(), loadBackups()]);
     setStatus('Up to date.');
   } catch (e) {
     setStatus('Error: ' + e.message, true);
@@ -674,6 +823,72 @@ async function saveNow() {
     setStatus('Saved.');
   } catch (e) {
     setStatus('Save failed: ' + e.message, true);
+  }
+}
+
+// Backups: a timestamped-folder-per-backup system living entirely on the
+// mod's own side (see CreateBackup/BuildBackupsJson in EditorMod.cs) - one
+// gets taken automatically the first time you save each session, and
+// another right before any restore, on top of whatever you trigger manually
+// with "Backup Now". Deliberately NOT gated behind loadGameState()'s
+// dataLoaded check the way currencies/blueprints are - backups work off the
+// save file directly, not live game state, so they're just as usable
+// whether or not you're currently in the hangar.
+function formatBackupDate(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString();
+  } catch (e) { return iso; }
+}
+
+function formatBackupSize(bytes) {
+  if (!bytes) return '0 KB';
+  const kb = bytes / 1024;
+  return kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
+}
+
+async function loadBackups() {
+  const root = document.getElementById('backups-root');
+  try {
+    const list = await api('/api/backups');
+    if (!list || list.length === 0) {
+      root.innerHTML = '<div class="empty">No backups yet - one will be taken automatically the first time you save this session, or hit "Backup Now" above.</div>';
+      return;
+    }
+    root.innerHTML = list.map(b => `
+      <div class="currency-row">
+        <div class="name">${escapeHtml(formatBackupDate(b.createdAt))}</div>
+        <div class="amount" style="font-size:12px;color:var(--text-dim);">${escapeHtml(b.name)} &middot; ${formatBackupSize(b.sizeBytes)}</div>
+        <button onclick="restoreBackup('${escapeHtml(b.name)}')">Restore</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    root.innerHTML = `<div class="empty">Could not load backups: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function createBackupNow() {
+  try {
+    setStatus('Creating backup...');
+    await api('/api/backups/create?label=manual', 'POST');
+    setStatus('Backup created.');
+    await loadBackups();
+  } catch (e) {
+    setStatus('Backup failed: ' + e.message, true);
+  }
+}
+
+async function restoreBackup(name) {
+  if (!confirm(`Restore the backup from "${name}"? This overwrites the save file on disk right now (after first backing up whatever's there). It only takes effect the next time the save is loaded - close and reopen it, or restart the game, to actually see it.`)) {
+    return;
+  }
+  try {
+    setStatus('Restoring backup...');
+    const r = await api('/api/backups/restore?name=' + encodeURIComponent(name), 'POST');
+    setStatus(r.note || 'Restored.');
+    await loadBackups();
+  } catch (e) {
+    setStatus('Restore failed: ' + e.message, true);
   }
 }
 
@@ -989,17 +1204,18 @@ async function resetCosmetic(bpIndex, cosIndex) {
 // "Change Base Item" combo: same searchable-combobox pattern as the module
 // picker above. Candidates come from two merged sources:
 //   1. The server's full item template catalog (/api/itemTemplates,
-//      loaded once into itemTemplateCatalog) - every on-foot weapon
-//      template the game has, not just ones you own. Ship components come
-//      back from that same endpoint with category=null on purpose (see
-//      RefreshItemTemplateCatalog in EditorMod.cs) since there's no
-//      confirmed data yet for sorting the 31 AllShipComponents entries into
-//      their 8 real in-game categories - a wrong guess there could let you
-//      swap e.g. a Reactor template into an Engine slot with no warning.
+//      loaded once into itemTemplateCatalog) - every weapon AND ship
+//      component template the game has, not just ones you own. Ship
+//      components used to come back with category=null (no confirmed
+//      per-entry category signal from live discovery) - now categorized via
+//      a guid->category table cross-referenced from JumpSaves, an
+//      independent offline Jump Space save editor that reverse-engineered
+//      the full static item catalog (see StaticItemCategoryByGuid in
+//      EditorMod.cs, near RefreshItemTemplateCatalog). Only a genuinely
+//      new/unseen guid would still come back with category=null.
 //   2. Every OWNED item's templateGuid in the same category, same as
-//      before - this is what still covers ship components until (1) can
-//      confidently cover them too, and is harmless extra coverage for
-//      weapons where it overlaps with the catalog.
+//      before - harmless extra coverage where it overlaps with the catalog,
+//      and a fallback for anything the static table doesn't recognize yet.
 let itemTemplateCatalog = []; // [{guid, name, category, typeName}]
 
 // Server-side /api/itemTemplates already excludes these (see
@@ -1046,7 +1262,7 @@ function itemTemplateComboHtml(bp) {
   return `
     <div class="module-combo item-template-combo" id="${itemTemplateComboId(bp.index)}">
       <input type="text" class="type-search" autocomplete="off" placeholder="Change base item..."
-        title="Changes what item this blueprint fundamentally IS (e.g. Sideclip -> Scorpion), not just its rarity/level/modules. Shows the base/template name, not any custom name you've given it in-game. Weapons show every on-foot gun template the game has; other categories still only show items you already own until the full catalog's category mapping is confirmed."
+        title="Changes what item this blueprint fundamentally IS (e.g. Sideclip -> Scorpion), not just its rarity/level/modules. Shows the base/template name, not any custom name you've given it in-game. Shows every template the game has for this category, not just items you already own."
         value="${escapeHtml(bp.originalName || bp.name || '')}"
         data-bp="${bp.index}"
         oninput="onItemTemplateComboInput(this)" onfocus="onItemTemplateComboFocus(this)" />
@@ -1062,9 +1278,7 @@ function renderItemTemplateComboList(input, query) {
   const q = (query || '').toLowerCase();
   const options = templateCandidatesFor(bp).filter(o => !q || o.name.toLowerCase().includes(q));
   if (options.length === 0) {
-    const msg = bp.category === 'Weapons'
-      ? 'No matching weapon templates'
-      : 'No other owned items in this category yet (full catalog for this category isn\'t confirmed yet)';
+    const msg = q ? 'No matching templates' : 'No other templates found for this category';
     list.innerHTML = `<div class="module-combo-empty">${escapeHtml(msg)}</div>`;
   } else {
     list.innerHTML = options.map(o =>
@@ -1112,7 +1326,10 @@ async function changeItemTemplate(bpIndex, templateGuid, name, input) {
 // this with no second argument, same as before.
 function rarityOptions(current, rangeStr) {
   let allowed = RARITIES;
-  if (rangeStr) {
+  // Cheat Mode skips the range filter entirely - the server accepts any
+  // rarity for any module while it's on (see the !_cheatModeEnabled guard
+  // in HandleSetRarity/HandleInventorySetRarity).
+  if (rangeStr && !cheatModeEnabled) {
     const parts = rangeStr.split('-');
     const lo = RARITIES.indexOf(parts[0]);
     const hi = RARITIES.indexOf(parts[1]);
@@ -1271,6 +1488,15 @@ function renderCategoryNav() {
   };
   nav.appendChild(inventoryLink);
 
+  const backupsLink = document.createElement('a');
+  backupsLink.href = '#backups-panel';
+  backupsLink.textContent = 'Backups';
+  backupsLink.onclick = (e) => {
+    e.preventDefault();
+    scrollToPanel('backups-panel');
+  };
+  nav.appendChild(backupsLink);
+
   CATEGORY_LAYOUT.forEach(groupDef => {
     const label = document.createElement('div');
     label.className = 'nav-group-label';
@@ -1426,6 +1652,35 @@ function formatStatNumber(n) {
 // recomputed value from CalculateRolledValue to correct the display.
 // `kind` is 'bp' (blueprintIndex) or 'inv' (inventory index) so the same
 // renderer works for both blueprint and inventory module rows.
+// Cheat-Mode-only control: previously there was no way to set a module's
+// OWN level directly at all - only the whole item's level had a direct
+// write (setBlueprintLevel/HandleSetLevel). A module's level could only
+// ever move via the official, game-capped TryModifyBlueprintModuleLevel
+// (+1 per call), and nothing in this UI ever even called that. This is a
+// genuinely new capability, not just an unlocked existing one - see
+// HandleSetModuleLevel/HandleSetInventoryModuleLevel in EditorMod.cs.
+function moduleLevelControlHtml(mod, kind, parentIndex) {
+  if (!cheatModeEnabled) return '';
+  const inputId = `mod-level-input-${kind}-${parentIndex}-${mod.index}`;
+  return `
+    <span class="inline-section-label" title="Cheat Mode: writes this module's own level directly, bypassing the game's normal upgrade cap for it">Module level:</span>
+    <input type="number" id="${inputId}" placeholder="${mod.level}" style="width:56px;">
+    <button onclick="commitModuleLevel('${kind}', ${parentIndex}, ${mod.index}, document.getElementById('${inputId}').value)">Set</button>`;
+}
+
+async function commitModuleLevel(kind, parentIndex, modIndex, levelStr) {
+  const level = parseInt(levelStr, 10);
+  if (isNaN(level) || level < 0) { setStatus('Enter a valid module level (0 or higher).', true); return; }
+  const endpoint = kind === 'inv'
+    ? `/api/setInventoryModuleLevel?index=${parentIndex}&moduleIndex=${modIndex}&level=${level}`
+    : `/api/setModuleLevel?blueprintIndex=${parentIndex}&moduleIndex=${modIndex}&level=${level}`;
+  try {
+    const r = await api(endpoint, 'POST');
+    setStatus(r.ok ? '[CHEAT] Module level set.' : 'Module level write did not stick - check the MelonLoader console for details.', !r.ok);
+    if (kind === 'inv') { await loadInventory(); } else { await loadBlueprints(); }
+  } catch (e) { setStatus('Error: ' + e.message, true); }
+}
+
 function tweakableRangesHtml(mod, kind, parentIndex) {
   if (!mod.tweakables || mod.tweakables.length === 0) return '';
   const parts = mod.tweakables.map(t => {
@@ -1437,10 +1692,18 @@ function tweakableRangesHtml(mod, kind, parentIndex) {
     const valId = `tw-val-${kind}-${parentIndex}-${mod.index}-${t.index}`;
     const roll = typeof t.roll === 'number' ? t.roll : 0;
     const current = typeof t.current === 'number' ? t.current : t.low;
+    // Cheat Mode raises the slider ceiling from 1.0 (a real roll's actual
+    // range) to CHEAT_MODE_ROLL_CEILING (300%) - matches the server's own
+    // CheatModeRollCeiling, which only accepts values past 1.0 while cheat
+    // mode is on (see SetModuleRollValue).
+    const sliderMax = cheatModeEnabled ? CHEAT_MODE_ROLL_CEILING : 1;
+    const rangeTitle = cheatModeEnabled
+      ? `${escapeHtml(t.name || 'stat')} - normal range ${lo} – ${hi}, Cheat Mode lets this go up to ${sliderMax * 100}% of that`
+      : `${escapeHtml(t.name || 'stat')} - range ${lo} – ${hi}, drag to set exactly where this stat's roll lands`;
     return `
-      <div class="tweakable-slider-row" title="${escapeHtml(t.name || 'stat')} - range ${lo} &ndash; ${hi}, drag to set exactly where this stat's roll lands">
+      <div class="tweakable-slider-row" title="${rangeTitle}">
         <span class="tweakable-slider-name">${escapeHtml(t.name || 'stat')}</span>
-        <input type="range" min="0" max="1" step="0.001" value="${roll}"
+        <input type="range" min="0" max="${sliderMax}" step="0.001" value="${roll}"
           oninput="previewTweakableRoll(this, '${valId}', ${t.low}, ${t.high})"
           onchange="commitTweakableRoll('${kind}', ${parentIndex}, ${mod.index}, ${t.index}, this.value, '${valId}')">
         <span class="tag tweakable-slider-value" id="${valId}">${formatStatNumber(current)}</span>
@@ -1503,6 +1766,7 @@ function renderModuleRow(bp, mod) {
           ${moduleComboHtml(bp, mod)}
           <button onclick="rerollModule(${bp.index}, ${mod.index})" title="Rolls a brand new module for this slot the way the game itself would: weighted rarity draw, weighted type pick among compatible modules, and real value rolls where we could determine the real range">Reroll</button>
           <button onclick="resetModule(${bp.index}, ${mod.index})" title="Restores this module's rarity, type, level, and rolls back to what it was when you first opened the web UI this session">Reset to Original</button>
+          ${moduleLevelControlHtml(mod, 'bp', bp.index)}
         </div>
         ${tweakableRangesHtml(mod, 'bp', bp.index)}
       </div>
@@ -1517,6 +1781,7 @@ function renderModuleRow(bp, mod) {
         <span class="module-name">${escapeHtml(mod.name)}</span>
         <span class="tag module-level">${moduleLevelLabel(mod)}</span>
         ${mod.rarityRange ? `<span class="tag" title="Valid rarity range for this module type - setting rarity outside this range may get silently reverted by the game">range: ${mod.rarityRange}</span>` : ''}
+        ${statusEffectTagsHtml(mod)}
       </div>
       <div class="module-desc">${escapeHtml(mod.description)}</div>
       ${detailsHtml}
@@ -1583,9 +1848,11 @@ function buildBlueprintCard(bp) {
       <span class="inline-section-label" title="Direct level write - unlike Upgrade Level, this can go down as well as up, and skips the official upgrade path entirely">Set level:</span>
       <button class="stepper-btn" onclick="setBlueprintLevel(${bp.index}, ${Math.max(0, bp.level - 1)})" ${bp.level <= 0 ? 'disabled title="Already at minimum level"' : 'title="Decrease level by 1 (direct write)"'}>&minus;</button>
       <input type="number" id="bp-level-input-${bp.index}" placeholder="${bp.level}" style="width:56px;">
-      <button class="stepper-btn" onclick="setBlueprintLevel(${bp.index}, ${bp.level + 1})" ${bp.upgradeable === false ? 'disabled title="Already at max level"' : 'title="Increase level by 1 (direct write)"'}>+</button>
+      <button class="stepper-btn" onclick="setBlueprintLevel(${bp.index}, ${bp.level + 1})" ${(bp.upgradeable === false && !cheatModeEnabled) ? 'disabled title="Already at max level"' : 'title="Increase level by 1 (direct write) - this button was never actually capped server-side, just greyed out at the game\'s normal max"'}>+</button>
       <button onclick="setBlueprintLevel(${bp.index})">Set</button>
       <button onclick="resetAllModules(${bp.index})" title="Restores every submodule on this item back to what it was when you first opened the web UI this session">Reset All Modules</button>
+      <button onclick="duplicateBlueprint(${bp.index})" title="Creates a full copy of this item (rarity/level/type/modules/cosmetics) in the next open slot of the same category">Duplicate</button>
+      <button class="danger" onclick="deleteBlueprint(${bp.index})" title="Permanently removes this item from your save - there's no Reset button for this, only your Backups panel">Delete</button>
       ${customizeButton}
       <select title="Debug - tucked away in a dropdown so they can't get bumped by accident" onchange="runItemDebug(${bp.index}, this.value); this.selectedIndex = 0;">
         <option value="" selected disabled>Debug&hellip;</option>
@@ -1913,6 +2180,41 @@ async function resetAllModules(bpIndex) {
   } catch (e) { setStatus('Reset failed: ' + e.message, true); }
 }
 
+// Duplicate/Delete are new, less battle-tested than everything else on this
+// card - this mod has only ever edited items that already exist, never
+// created or removed one outright. Both save a backup automatically as part
+// of the normal SaveNow() flow (see the Backups panel), but there's no
+// per-item "Reset" for either of these the way there is for every other
+// change here, hence the extra-blunt confirm text and Delete's danger
+// styling.
+async function duplicateBlueprint(bpIndex) {
+  const bp = (lastBlueprintsData || []).find(b => b.index === bpIndex);
+  const name = bp ? (bp.name || bp.originalName || 'this item') : 'this item';
+  if (!confirm(`Duplicate "${name}"? A full copy (rarity/level/type/modules/cosmetics) will be created in the next open slot of the same category.`)) {
+    return;
+  }
+  try {
+    setStatus('Duplicating...');
+    const r = await api(`/api/duplicateBlueprint?blueprintIndex=${bpIndex}`, 'POST');
+    setStatus(`Duplicated into slot ${r.slotIndex + 1}.`);
+    await loadBlueprints();
+  } catch (e) { setStatus('Duplicate failed: ' + e.message, true); }
+}
+
+async function deleteBlueprint(bpIndex) {
+  const bp = (lastBlueprintsData || []).find(b => b.index === bpIndex);
+  const name = bp ? (bp.name || bp.originalName || 'this item') : 'this item';
+  if (!confirm(`Permanently delete "${name}"? This removes it from your save entirely - there's no Reset button to undo this, only a backup restore (see the Backups panel above).`)) {
+    return;
+  }
+  try {
+    setStatus('Deleting...');
+    await api(`/api/deleteBlueprint?blueprintIndex=${bpIndex}`, 'POST');
+    setStatus(`Deleted "${name}".`);
+    await loadBlueprints();
+  } catch (e) { setStatus('Delete failed: ' + e.message, true); }
+}
+
 // Global reset - every item's rarity/level, every module's type/rarity/
 // level/rolls, and every currency amount, back to whatever they were the
 // first time this session ever saw them (i.e. when the web UI first loaded/
@@ -2192,6 +2494,7 @@ function renderInventoryModuleRow(item, mod) {
           ${inventoryModuleComboHtml(item, mod)}
           <button onclick="rerollInventoryModule(${item.index}, ${mod.index})" title="Rolls a brand new module for this slot the way the game itself would: weighted rarity draw, weighted type pick among compatible modules, and real value rolls where we could determine the real range">Reroll</button>
           <button onclick="resetInventoryModule(${item.index}, ${mod.index})" title="Restores this module's rarity, type, level, and rolls back to what it was when you first opened the web UI this session">Reset to Original</button>
+          ${moduleLevelControlHtml(mod, 'inv', item.index)}
         </div>
         ${tweakableRangesHtml(mod, 'inv', item.index)}
       </div>
@@ -2206,6 +2509,7 @@ function renderInventoryModuleRow(item, mod) {
         <span class="module-name">${escapeHtml(mod.name)}</span>
         <span class="tag module-level">${moduleLevelLabel(mod)}</span>
         ${mod.rarityRange ? `<span class="tag" title="Valid rarity range for this module type - setting rarity outside this range may get silently reverted by the game">range: ${mod.rarityRange}</span>` : ''}
+        ${statusEffectTagsHtml(mod)}
       </div>
       <div class="module-desc">${escapeHtml(mod.description)}</div>
       ${detailsHtml}

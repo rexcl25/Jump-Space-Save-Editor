@@ -8,8 +8,10 @@
     <AssemblyName>JumpSpaceEditor</AssemblyName>
     <RootNamespace>JumpSpaceEditor</RootNamespace>
 
-    <!-- EDIT THIS: point at your Jump Space install folder -->
-    <GameDir>D:\SteamLibrary\steamapps\common\JumpSpace</GameDir>
+    <!-- Your real Jump Space install folder (confirmed via Steam userdata
+         lookups in EditorMod.cs's backup system) - update this if you ever
+         move the game to a different drive/library. -->
+    <GameDir>C:\Program Files (x86)\Steam\steamapps\common\JumpSpace</GameDir>
 
     <!-- Flatten build output to a single "build\" folder instead of the
          default bin\Release\net6.0\ nesting - makes it easy to point at one

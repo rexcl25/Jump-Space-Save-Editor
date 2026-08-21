@@ -170,16 +170,17 @@ namespace JumpSpaceEditor
 
         // Full "change base item to ANY template the game has" catalog - not
         // just items you already own (that's templateCandidatesFor() client-
-        // side, kept as a fallback). Category is only confidently known for
-        // weapons right now (m_WeaponEntriesByGuid is exclusively on-foot
-        // guns, so Category="Weapons" always) - ship components all read
-        // Category=null here until a real log confirms how to sort
-        // AllShipComponents' 31 entries into the 8 in-game component
-        // categories (Reactors/Shields/etc.). TypeName carries each entry's
-        // raw IL2Cpp runtime type name so that mapping can be built from
-        // real data via "Inspect Weapon/Ship Template Catalog" instead of
-        // guessed - a wrong guess here could let you swap a Reactor template
-        // into an Engine slot with no warning.
+        // side, kept as a fallback). Weapons are always confidently
+        // categorized (m_WeaponEntriesByGuid is exclusively on-foot guns, so
+        // Category="Weapons" always). Ship components used to read
+        // Category=null here (no confirmed per-entry category signal from
+        // live discovery) - now categorized via StaticItemCategoryByGuid, a
+        // guid->category table cross-referenced from JumpSaves' independently
+        // reverse-engineered static catalog (see that dictionary's comment,
+        // near RefreshItemTemplateCatalog). Only falls back to null for a
+        // guid that table doesn't recognize (a genuinely new/unseen
+        // template). TypeName still carries each entry's raw IL2Cpp runtime
+        // type name for reference.
         private class ItemTemplateCandidate
         {
             public string Guid;
@@ -428,12 +429,21 @@ namespace JumpSpaceEditor
             if (method == "GET" && path == "/api/dumpCosmeticsScopeDiscovery") { DumpCosmeticsScopeDiscovery(); WriteJson(ctx, 200, "{\"ok\":true,\"note\":\"check the MelonLoader console or Editor_Log.txt\"}"); return; }
             if (method == "GET" && path == "/api/dumpCosmeticSelectionDiscovery") { DumpCosmeticSelectionDiscovery(); WriteJson(ctx, 200, "{\"ok\":true,\"note\":\"check the MelonLoader console or Editor_Log.txt\"}"); return; }
             if (method == "POST" && path == "/api/save") { SaveNow(); WriteJson(ctx, 200, "{\"ok\":true}"); return; }
+            if (method == "GET" && path == "/api/backups") { WriteJson(ctx, 200, BuildBackupsJson()); return; }
+            if (method == "POST" && path == "/api/backups/create") { HandleCreateBackup(ctx); return; }
+            if (method == "POST" && path == "/api/backups/restore") { HandleRestoreBackup(ctx); return; }
+            if (method == "GET" && path == "/api/cheatMode") { WriteJson(ctx, 200, BuildCheatModeJson()); return; }
+            if (method == "POST" && path == "/api/cheatMode") { HandleSetCheatMode(ctx); return; }
+            if (method == "POST" && path == "/api/setModuleLevel") { HandleSetModuleLevel(ctx); return; }
+            if (method == "POST" && path == "/api/setInventoryModuleLevel") { HandleSetInventoryModuleLevel(ctx); return; }
             if (method == "GET" && path == "/api/debugDump") { HandleDebugDump(ctx); return; }
             if (method == "GET" && path == "/api/searchModuleDatabase") { HandleSearchModuleDatabase(ctx); return; }
             if (method == "GET" && path == "/api/diagnoseUserData") { DiagnoseUserDataStability(); WriteJson(ctx, 200, "{\"ok\":true,\"note\":\"check the MelonLoader console or Editor_Log.txt\"}"); return; }
             if (method == "GET" && path == "/api/dumpItemGenerator") { DumpItemGeneratorShape(); WriteJson(ctx, 200, "{\"ok\":true,\"note\":\"check the MelonLoader console or Editor_Log.txt\"}"); return; }
             if (method == "POST" && path == "/api/resetEverything") { HandleResetEverything(ctx); return; }
             if (method == "POST" && path == "/api/changeItemTemplate") { HandleChangeItemTemplate(ctx); return; }
+            if (method == "POST" && path == "/api/duplicateBlueprint") { HandleDuplicateBlueprint(ctx); return; }
+            if (method == "POST" && path == "/api/deleteBlueprint") { HandleDeleteBlueprint(ctx); return; }
             if (method == "GET" && path == "/api/dumpWeaponShipTemplateCatalog") { DumpWeaponAndShipTemplateCatalog(); WriteJson(ctx, 200, "{\"ok\":true,\"note\":\"check the MelonLoader console or Editor_Log.txt\"}"); return; }
             if (method == "GET" && path == "/api/dumpInventoryDiscovery") { DumpInventoryDiscovery(); WriteJson(ctx, 200, "{\"ok\":true,\"note\":\"check the MelonLoader console or Editor_Log.txt\"}"); return; }
             if (method == "GET" && path == "/api/dumpArtifactSystemDiscovery") { DumpArtifactSystemDiscovery(); WriteJson(ctx, 200, "{\"ok\":true,\"note\":\"check the MelonLoader console or Editor_Log.txt\"}"); return; }
@@ -576,6 +586,7 @@ namespace JumpSpaceEditor
                       .Append(",\"guid\":").Append(JsonStr(mGuid))
                       .Append(",\"name\":").Append(JsonStr(moduleName))
                       .Append(",\"description\":").Append(JsonStr(moduleDesc))
+                      .Append(",\"staticTitle\":").Append(JsonStr(TryGetStaticModuleTitle(mGuid)))
                       .Append(",\"rarityRange\":").Append(JsonStr(rarityRange))
                       .Append(",\"isBasic\":").Append(moduleIsBasic ? "true" : "false")
                       .Append(",\"tweakables\":").Append(tweakablesJson)
@@ -726,6 +737,7 @@ namespace JumpSpaceEditor
                       .Append(",\"guid\":").Append(JsonStr(mGuid))
                       .Append(",\"name\":").Append(JsonStr(moduleName))
                       .Append(",\"description\":").Append(JsonStr(moduleDesc))
+                      .Append(",\"staticTitle\":").Append(JsonStr(TryGetStaticModuleTitle(mGuid)))
                       .Append(",\"rarityRange\":").Append(JsonStr(rarityRange))
                       .Append(",\"isBasic\":").Append(moduleIsBasic ? "true" : "false")
                       .Append(",\"tweakables\":").Append(tweakablesJson)
@@ -869,10 +881,20 @@ namespace JumpSpaceEditor
         // already populates, just targeting one slot instead of rebuilding
         // the whole array. Returns the new array length on success (-1 on
         // failure) so callers can validate tweakableIndex was in range.
+        // Cheat Mode ceiling for a roll - a real roll is statistically 0-1,
+        // but pushing it past 1.0 just linearly extrapolates past a
+        // module's normal max stat value in CalculateRolledValue (confirmed
+        // safe to feed it an out-of-range float - see GetSingleTweakableCurrentValue).
+        // 3.0 (300%) is a generous but finite cheat headroom, not unbounded,
+        // to keep the numbers sane rather than feeding something absurd into
+        // the game's own stat formula.
+        private const float CheatModeRollCeiling = 3f;
+
         private bool SetModuleRollValue(object module, int tweakableIndex, float roll)
         {
             if (module == null || tweakableIndex < 0) return false;
-            roll = Math.Max(0f, Math.Min(1f, roll));
+            float ceiling = _cheatModeEnabled ? CheatModeRollCeiling : 1f;
+            roll = Math.Max(0f, Math.Min(ceiling, roll));
             try
             {
                 var rollsProp = module.GetType().GetProperty("m_BaseValueRolls", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1234,9 +1256,9 @@ namespace JumpSpaceEditor
                 // longer offers anything outside it, but block it
                 // server-side too in case of a stale/cached tab still
                 // POSTing an out-of-range value here.
-                if (targetCandidate != null && rarityName != null && !IsRarityWithinRange(targetCandidate.Scriptable, rarityName))
+                if (!_cheatModeEnabled && targetCandidate != null && rarityName != null && !IsRarityWithinRange(targetCandidate.Scriptable, rarityName))
                 {
-                    WriteJson(ctx, 400, "{\"error\":\"'" + rarityName + "' is outside this module's valid rarity range (" + GetRarityRangeString(targetCandidate.Scriptable) + ") - the game would likely revert it anyway.\"}");
+                    WriteJson(ctx, 400, "{\"error\":\"'" + rarityName + "' is outside this module's valid rarity range (" + GetRarityRangeString(targetCandidate.Scriptable) + ") - the game would likely revert it anyway. Enable Cheat Mode to override this.\"}");
                     return;
                 }
             }
@@ -1642,6 +1664,287 @@ namespace JumpSpaceEditor
             WriteJson(ctx, 200, "{\"ok\":" + (wroteGeneratedBack ? "true" : "false") + "}");
         }
 
+        // ---------- Duplicate / Delete blueprint ----------
+        //
+        // Both of these are a genuinely new KIND of operation for this mod -
+        // every other feature here only ever modifies an object that already
+        // exists in your save data. Duplicate has to fabricate a brand-new,
+        // fully independent blueprint entry (its own module/cosmetic arrays,
+        // not just copied references to the original's), and Delete has to
+        // remove an entry from the raw m_Blueprints list entirely - neither
+        // is reflection territory this mod has needed before now. Built the
+        // same way every other risky feature in this file was: best-effort
+        // reflection with a Log() call at every step, so a failure is
+        // diagnosable from Editor_Log.txt in one pass instead of a second
+        // guess.
+
+        // Reflection-invokes the protected object.MemberwiseClone() - a
+        // full, independent shallow copy of every field, without needing to
+        // find or guess a constructor (IL2CPP interop types often don't have
+        // an obvious one). Reference-type fields (arrays, nested objects)
+        // are still SHARED with the source after this call - see
+        // CloneGeneratedDataForDuplicate for where those get deep-cloned on
+        // top of this.
+        private static readonly MethodInfo _memberwiseCloneMethod =
+            typeof(object).GetMethod("MemberwiseClone", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        private object ShallowClone(object src)
+        {
+            if (src == null) return null;
+            try { return _memberwiseCloneMethod.Invoke(src, null); }
+            catch (Exception ex) { Log("ShallowClone threw for " + src.GetType().FullName + ": " + ex.Message); return null; }
+        }
+
+        // Deep-clones an array-like container (has Length + a read/write
+        // Item indexer - the same shape GetModuleAt/GetCosmeticAt/
+        // SetModuleRollValue already rely on) into a brand-new, independent
+        // instance of the SAME runtime type, via that type's (int size)
+        // constructor - the standard shape for both a plain .NET array and
+        // an IL2CPP Il2CppReferenceArray<T>/Il2CppStructArray<T>. Falls back
+        // to a Clone() method if no (int) constructor is found. elementCloner
+        // lets the caller deep-clone each element too (needed for module/
+        // cosmetic objects); pass null to copy elements as-is (fine for
+        // primitives, like the float[] roll arrays).
+        private object CloneArrayLike(object source, Func<object, object> elementCloner)
+        {
+            if (source == null) return null;
+            var t = source.GetType();
+            try
+            {
+                var lengthProp = t.GetProperty("Length", BindingFlags.Public | BindingFlags.Instance);
+                var itemProp = t.GetProperty("Item", BindingFlags.Public | BindingFlags.Instance);
+                if (lengthProp == null || itemProp == null) { Log("CloneArrayLike: " + t.FullName + " has no Length/Item - can't clone."); return null; }
+                int length = (int)lengthProp.GetValue(source);
+
+                object clone = null;
+                var ctor = t.GetConstructor(new[] { typeof(int) });
+                if (ctor != null) clone = ctor.Invoke(new object[] { length });
+                else
+                {
+                    var cloneMethod = t.GetMethod("Clone", Type.EmptyTypes);
+                    if (cloneMethod != null) clone = cloneMethod.Invoke(source, null);
+                }
+                if (clone == null) { Log("CloneArrayLike: could not construct a new " + t.FullName + " (no (int) constructor and no Clone() method)."); return null; }
+
+                for (int i = 0; i < length; i++)
+                {
+                    object element = itemProp.GetValue(source, new object[] { i });
+                    object clonedElement = elementCloner != null ? elementCloner(element) : element;
+                    itemProp.SetValue(clone, clonedElement, new object[] { i });
+                }
+                return clone;
+            }
+            catch (Exception ex) { Log("CloneArrayLike threw for " + t.FullName + ": " + ex.Message); return null; }
+        }
+
+        // Clones one module element for a duplicated item: MemberwiseClone
+        // gets every scalar field (m_ModuleGuid/m_Rarity/m_UpgradeLevel)
+        // copied for free, but m_BaseValueRolls is a float[] reference that
+        // MemberwiseClone would otherwise leave SHARED with the source
+        // module - moving a roll slider on the duplicate would silently
+        // also move it on the original. Deep-clone that one field on top of
+        // the shallow clone to fix that (see SetModuleRollValue for the
+        // same m_BaseValueRolls shape this relies on).
+        private object CloneModuleForDuplicate(object sourceModule)
+        {
+            object clone = ShallowClone(sourceModule);
+            if (clone == null) return null;
+            object rolls = GetInstanceMemberValue(sourceModule, "m_BaseValueRolls");
+            if (rolls != null)
+            {
+                object clonedRolls = CloneArrayLike(rolls, null);
+                if (clonedRolls != null) TrySetInstanceMemberValue(clone, "m_BaseValueRolls", clonedRolls);
+                else Log("CloneModuleForDuplicate: could not deep-clone m_BaseValueRolls - duplicate's rolls may still be linked to the original.");
+            }
+            return clone;
+        }
+
+        // CosmeticSelection only carries m_SlotType/m_SlotIndex/
+        // m_CosmeticGuid (no nested mutable containers seen anywhere else in
+        // this file) - a plain MemberwiseClone is enough, no extra deep
+        // clone needed.
+        private object CloneCosmeticForDuplicate(object sourceCosmetic) => ShallowClone(sourceCosmetic);
+
+        private object CloneGeneratedDataForDuplicate(object sourceGeneratedData)
+        {
+            object clone = ShallowClone(sourceGeneratedData);
+            if (clone == null) return null;
+
+            object modules = GetInstanceMemberValue(sourceGeneratedData, "m_Modules");
+            object clonedModules = CloneArrayLike(modules, CloneModuleForDuplicate);
+            if (clonedModules != null) TrySetInstanceMemberValue(clone, "m_Modules", clonedModules);
+            else Log("CloneGeneratedDataForDuplicate: could not deep-clone m_Modules - duplicate's modules may still be linked to the original.");
+
+            object cosmetics = GetInstanceMemberValue(sourceGeneratedData, "m_Cosmetics");
+            object clonedCosmetics = CloneArrayLike(cosmetics, CloneCosmeticForDuplicate);
+            if (clonedCosmetics != null) TrySetInstanceMemberValue(clone, "m_Cosmetics", clonedCosmetics);
+            else Log("CloneGeneratedDataForDuplicate: could not deep-clone m_Cosmetics - duplicate's cosmetics may still be linked to the original.");
+
+            return clone;
+        }
+
+        private int GetMaxSlotsForCategory(string categoryGuid)
+        {
+            foreach (var cap in GetBlueprintSlotCapacities())
+            {
+                string g = GetInstanceMemberValue(cap, "m_CategoryGuid") as string;
+                if (string.Equals(g, categoryGuid, StringComparison.OrdinalIgnoreCase))
+                    return SafeInt(GetInstanceMemberValue(cap, "m_MaxSlots"));
+            }
+            return 0;
+        }
+
+        private bool TryAddBlueprintToRawList(object newBp)
+        {
+            try
+            {
+                object userData = GetPersistentUserData();
+                if (userData == null) { Log("TryAddBlueprintToRawList: GetPersistentUserData() returned null."); return false; }
+                object list = GetInstanceMemberValue(userData, "m_Blueprints");
+                if (list == null) { Log("TryAddBlueprintToRawList: m_Blueprints is null."); return false; }
+                var addMethod = list.GetType().GetMethod("Add", BindingFlags.Public | BindingFlags.Instance);
+                if (addMethod == null)
+                {
+                    Log("TryAddBlueprintToRawList: no public Add(T) method on " + list.GetType().FullName + ". Available methods: " + DescribeMethodNames(list.GetType()));
+                    return false;
+                }
+                addMethod.Invoke(list, new object[] { newBp });
+                Log("TryAddBlueprintToRawList: Add() invoked without throwing.");
+                return true;
+            }
+            catch (Exception ex) { Log("TryAddBlueprintToRawList threw: " + ex.Message); return false; }
+        }
+
+        // Matches by m_Guid rather than trusting bpIndex to still be the
+        // right raw-list index (GetBlueprintsSnapshot's order isn't
+        // guaranteed to be the raw list's own order - see the blueprint-
+        // ordering discovery notes elsewhere in this file). Falls back to
+        // the snapshot index only if the target has no guid at all.
+        private bool TryRemoveBlueprintFromRawList(string targetGuid, int fallbackIndex)
+        {
+            try
+            {
+                object userData = GetPersistentUserData();
+                if (userData == null) { Log("TryRemoveBlueprintFromRawList: GetPersistentUserData() returned null."); return false; }
+                object list = GetInstanceMemberValue(userData, "m_Blueprints");
+                if (list == null) { Log("TryRemoveBlueprintFromRawList: m_Blueprints is null."); return false; }
+
+                var t = list.GetType();
+                var countProp = t.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+                var itemProp = t.GetProperty("Item", BindingFlags.Public | BindingFlags.Instance);
+                int rawIndex = -1;
+                if (countProp != null && itemProp != null && !string.IsNullOrEmpty(targetGuid))
+                {
+                    int count = (int)countProp.GetValue(list);
+                    for (int i = 0; i < count; i++)
+                    {
+                        object entry = itemProp.GetValue(list, new object[] { i });
+                        string g = GetInstanceMemberValue(entry, "m_Guid") as string;
+                        if (g == targetGuid) { rawIndex = i; break; }
+                    }
+                }
+                if (rawIndex < 0)
+                {
+                    rawIndex = fallbackIndex;
+                    Log("TryRemoveBlueprintFromRawList: guid match failed, falling back to snapshot index " + fallbackIndex + ".");
+                }
+
+                var removeAtMethod = t.GetMethod("RemoveAt", BindingFlags.Public | BindingFlags.Instance);
+                if (removeAtMethod == null)
+                {
+                    Log("TryRemoveBlueprintFromRawList: no public RemoveAt(int) method on " + t.FullName + ". Available methods: " + DescribeMethodNames(t));
+                    return false;
+                }
+                removeAtMethod.Invoke(list, new object[] { rawIndex });
+                Log("TryRemoveBlueprintFromRawList: RemoveAt(" + rawIndex + ") invoked without throwing.");
+                return true;
+            }
+            catch (Exception ex) { Log("TryRemoveBlueprintFromRawList threw: " + ex.Message); return false; }
+        }
+
+        // Diagnostic helper only - lists every distinct public method name on
+        // a type, so a failed Add/RemoveAt lookup logs something immediately
+        // actionable (the real method name to try next) instead of just "not
+        // found".
+        private static string DescribeMethodNames(Type t)
+        {
+            var seen = new HashSet<string>();
+            var sb = new StringBuilder();
+            foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!seen.Add(m.Name)) continue;
+                if (sb.Length > 0) sb.Append(", ");
+                sb.Append(m.Name);
+            }
+            return sb.ToString();
+        }
+
+        private void HandleDuplicateBlueprint(HttpListenerContext ctx)
+        {
+            int bpIndex = QueryInt(ctx, "blueprintIndex", -1);
+            var blueprints = GetBlueprintsSnapshot();
+            if (bpIndex < 0 || bpIndex >= blueprints.Count) { WriteJson(ctx, 400, "{\"error\":\"bad blueprintIndex\"}"); return; }
+            object source = blueprints[bpIndex];
+
+            string categoryGuid = GetInstanceMemberValue(source, "m_CategoryGuid") as string;
+            if (string.IsNullOrEmpty(categoryGuid)) { WriteJson(ctx, 400, "{\"error\":\"Source item has no category - can't find an open slot for the duplicate.\"}"); return; }
+
+            var takenSlots = new HashSet<int>();
+            foreach (var bp in blueprints)
+            {
+                string g = GetInstanceMemberValue(bp, "m_CategoryGuid") as string;
+                if (string.Equals(g, categoryGuid, StringComparison.OrdinalIgnoreCase))
+                    takenSlots.Add(SafeInt(GetInstanceMemberValue(bp, "m_SlotIndex")));
+            }
+            int maxSlots = GetMaxSlotsForCategory(categoryGuid);
+            int newSlot = -1;
+            for (int s = 0; s < maxSlots; s++) { if (!takenSlots.Contains(s)) { newSlot = s; break; } }
+            if (newSlot < 0) { WriteJson(ctx, 400, "{\"error\":\"No open slot in this item's category (" + takenSlots.Count + "/" + maxSlots + " full) - free one up first.\"}"); return; }
+
+            Log($"HandleDuplicateBlueprint: duplicating blueprint[{bpIndex}] (category {categoryGuid}) into new slot {newSlot}.");
+
+            object clonedBp = ShallowClone(source);
+            if (clonedBp == null) { WriteJson(ctx, 500, "{\"error\":\"Could not clone this item - see Editor_Log.txt.\"}"); return; }
+
+            object sourceGenerated = GetInstanceMemberValue(source, "m_GeneratedData");
+            object clonedGenerated = CloneGeneratedDataForDuplicate(sourceGenerated);
+            if (clonedGenerated == null) { WriteJson(ctx, 500, "{\"error\":\"Could not clone this item's generated data - see Editor_Log.txt.\"}"); return; }
+
+            string newGuid = Guid.NewGuid().ToString("N");
+            bool wroteGuid = TrySetInstanceMemberValue(clonedBp, "m_Guid", newGuid);
+            bool wroteSlot = TrySetInstanceMemberValue(clonedBp, "m_SlotIndex", newSlot);
+            bool wroteGenerated = TrySetInstanceMemberValue(clonedBp, "m_GeneratedData", clonedGenerated);
+            Log($"HandleDuplicateBlueprint: wroteGuid={wroteGuid}, wroteSlot={wroteSlot}, wroteGenerated={wroteGenerated}.");
+            if (!wroteGuid || !wroteSlot || !wroteGenerated)
+            {
+                WriteJson(ctx, 500, "{\"error\":\"Could not set the duplicate's guid/slot/data - see Editor_Log.txt.\"}");
+                return;
+            }
+
+            bool added = TryAddBlueprintToRawList(clonedBp);
+            if (!added) { WriteJson(ctx, 500, "{\"error\":\"Cloned the item but could not add it to your save data - see Editor_Log.txt.\"}"); return; }
+
+            SaveNow();
+            WriteJson(ctx, 200, "{\"ok\":true,\"slotIndex\":" + newSlot + "}");
+        }
+
+        private void HandleDeleteBlueprint(HttpListenerContext ctx)
+        {
+            int bpIndex = QueryInt(ctx, "blueprintIndex", -1);
+            var blueprints = GetBlueprintsSnapshot();
+            if (bpIndex < 0 || bpIndex >= blueprints.Count) { WriteJson(ctx, 400, "{\"error\":\"bad blueprintIndex\"}"); return; }
+            object target = blueprints[bpIndex];
+            string targetGuid = GetInstanceMemberValue(target, "m_Guid") as string;
+
+            Log($"HandleDeleteBlueprint: deleting blueprint[{bpIndex}] (guid {targetGuid}).");
+
+            bool removed = TryRemoveBlueprintFromRawList(targetGuid, bpIndex);
+            if (!removed) { WriteJson(ctx, 500, "{\"error\":\"Could not remove this item from your save data - see Editor_Log.txt.\"}"); return; }
+
+            SaveNow();
+            WriteJson(ctx, 200, "{\"ok\":true}");
+        }
+
         // ---------- Inventory (loose carried items, separate from blueprints) ----------
         // Same write-back concern as everywhere else in this file (isWrapped=
         // False under reflection but a boxed copy needs writing back into its
@@ -1796,9 +2099,9 @@ namespace JumpSpaceEditor
                 // longer offers anything outside it, but block it
                 // server-side too in case of a stale/cached tab still
                 // POSTing an out-of-range value here.
-                if (targetCandidate != null && rarityName != null && !IsRarityWithinRange(targetCandidate.Scriptable, rarityName))
+                if (!_cheatModeEnabled && targetCandidate != null && rarityName != null && !IsRarityWithinRange(targetCandidate.Scriptable, rarityName))
                 {
-                    WriteJson(ctx, 400, "{\"error\":\"'" + rarityName + "' is outside this module's valid rarity range (" + GetRarityRangeString(targetCandidate.Scriptable) + ") - the game would likely revert it anyway.\"}");
+                    WriteJson(ctx, 400, "{\"error\":\"'" + rarityName + "' is outside this module's valid rarity range (" + GetRarityRangeString(targetCandidate.Scriptable) + ") - the game would likely revert it anyway. Enable Cheat Mode to override this.\"}");
                     return;
                 }
             }
@@ -2582,10 +2885,337 @@ namespace JumpSpaceEditor
 
         private void SaveNow()
         {
+            // First save of this mod session: snapshot whatever's already on
+            // disk BEFORE this edit lands, so there's always a "how it was
+            // when I started touching things this session" backup to fall
+            // back to, without the user having to remember to do it
+            // themselves. See the backup/restore system below.
+            if (!_autoBackupDoneThisSession)
+            {
+                _autoBackupDoneThisSession = true;
+                CreateBackup("session-start");
+            }
+
             var m = _mgrType.GetMethod("SaveDataToCloud", BindingFlags.Public | BindingFlags.Static);
             if (m == null) { Log("SaveDataToCloud not found."); return; }
             m.Invoke(null, null);
             Log("SaveDataToCloud() called.");
+        }
+
+        // ---------- backup / restore system ----------
+
+        // Inspired by JumpSaves' BackupStore.cs (github.com/gurudennis/
+        // JumpSaves, MIT licensed) - a timestamped-folder-per-backup pattern
+        // for the same save file this game uses. One real difference from
+        // JumpSaves: that tool is an OFFLINE editor (only ever runs while
+        // Jump Space is closed) that edits the save file directly, so a
+        // restore takes effect immediately. This mod edits a LIVE save while
+        // the game is running via reflection and calls the game's own
+        // SaveDataToCloud() to persist changes - it never writes
+        // persistent_user_data.bin itself. That means restoring a backup
+        // here only overwrites the file ON DISK; the currently running game
+        // session has its own copy in memory and won't notice until you
+        // close and reopen the save (or restart the game). HandleRestoreBackup
+        // says as much in its response so the UI can surface it.
+        private static string _cachedSaveFilePath = null;
+        private bool _autoBackupDoneThisSession = false;
+        private const int MaxBackups = 20;
+
+        private static string BackupsDir
+        {
+            get
+            {
+                var dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                return Path.Combine(dir ?? ".", "JumpSpaceEditorBackups");
+            }
+        }
+
+        // Jump Space's actual save file (persistent_user_data.bin) lives in
+        // Steam's per-user cloud-sync mirror folder, NOT anywhere under the
+        // game's own install directory - confirmed via JumpSaves' SaveDir.cs,
+        // which reverse-engineered this path from the game's real Steam
+        // Cloud behavior (userdata/{steamid}/1757300/remote/). The Steam
+        // CLIENT install location (where "userdata" lives) is independent of
+        // whatever drive this game's own library happens to be on, so it
+        // can't be derived from this DLL's own folder - it has to be found
+        // directly. Checked against a handful of common Steam client install
+        // locations rather than reading the Windows registry (like JumpSaves
+        // does), to avoid pulling in a Microsoft.Win32.Registry package
+        // reference just for this one lookup.
+        private string FindSaveFilePath()
+        {
+            if (_cachedSaveFilePath != null && File.Exists(_cachedSaveFilePath)) return _cachedSaveFilePath;
+
+            var candidateSteamDirs = new List<string>();
+            foreach (var drive in new[] { "C", "D", "E", "F", "G", "H" })
+            {
+                candidateSteamDirs.Add(drive + @":\Program Files (x86)\Steam");
+                candidateSteamDirs.Add(drive + @":\Steam");
+                candidateSteamDirs.Add(drive + @":\SteamLibrary\Steam");
+            }
+
+            foreach (var steamDir in candidateSteamDirs)
+            {
+                string userDataRoot = Path.Combine(steamDir, "userdata");
+                if (!Directory.Exists(userDataRoot)) continue;
+                try
+                {
+                    foreach (var userDir in Directory.GetDirectories(userDataRoot))
+                    {
+                        string saveFile = Path.Combine(userDir, "1757300", "remote", "persistent_user_data.bin");
+                        if (File.Exists(saveFile))
+                        {
+                            _cachedSaveFilePath = saveFile;
+                            return saveFile;
+                        }
+                    }
+                }
+                catch (Exception ex) { Log("FindSaveFilePath: scanning " + userDataRoot + " threw: " + ex.Message); }
+            }
+
+            return null;
+        }
+
+        // Copies the current on-disk save into a new timestamped folder
+        // under BackupsDir, alongside a small metadata.json (mirroring
+        // JumpSaves' Backup/BackupStore shape, simplified to what this mod
+        // actually needs - no rename support). Returns the new folder's name
+        // on success, or null if the save file couldn't be found or the copy
+        // failed (both logged either way).
+        private string CreateBackup(string label)
+        {
+            string saveFile = FindSaveFilePath();
+            if (saveFile == null)
+            {
+                Log("CreateBackup: could not locate persistent_user_data.bin under any Steam userdata folder.");
+                return null;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(BackupsDir);
+                string stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+                string folderName = string.IsNullOrEmpty(label) ? stamp : (stamp + "_" + label);
+                string folderPath = Path.Combine(BackupsDir, folderName);
+                Directory.CreateDirectory(folderPath);
+                string destFile = Path.Combine(folderPath, "persistent_user_data.bin");
+                File.Copy(saveFile, destFile, true);
+
+                string metaPath = Path.Combine(folderPath, "metadata.json");
+                File.WriteAllText(metaPath,
+                    "{\"timestamp\":" + JsonStr(DateTime.Now.ToString("o")) +
+                    ",\"originalPath\":" + JsonStr(saveFile) +
+                    ",\"label\":" + JsonStr(label) + "}");
+
+                Log($"CreateBackup: backed up '{saveFile}' -> '{destFile}'.");
+                PruneBackups();
+                return folderName;
+            }
+            catch (Exception ex)
+            {
+                Log("CreateBackup failed: " + ex.Message);
+                return null;
+            }
+        }
+
+        // Keeps only the MaxBackups most recent backup folders - same
+        // pruning concept as JumpSaves' BackupStore.MaxBackups, just fixed
+        // instead of user-configurable, to keep this simple.
+        private void PruneBackups()
+        {
+            try
+            {
+                if (!Directory.Exists(BackupsDir)) return;
+                var dirs = new List<DirectoryInfo>(new DirectoryInfo(BackupsDir).GetDirectories());
+                dirs.Sort((a, b) => b.CreationTimeUtc.CompareTo(a.CreationTimeUtc));
+                for (int i = MaxBackups; i < dirs.Count; i++)
+                {
+                    try { dirs[i].Delete(true); Log("PruneBackups: removed old backup " + dirs[i].Name); }
+                    catch (Exception ex) { Log("PruneBackups: failed to delete " + dirs[i].Name + ": " + ex.Message); }
+                }
+            }
+            catch (Exception ex) { Log("PruneBackups failed: " + ex.Message); }
+        }
+
+        private string BuildBackupsJson()
+        {
+            var sb = new StringBuilder();
+            sb.Append("[");
+            try
+            {
+                if (Directory.Exists(BackupsDir))
+                {
+                    var dirs = new List<DirectoryInfo>(new DirectoryInfo(BackupsDir).GetDirectories());
+                    dirs.Sort((a, b) => b.CreationTimeUtc.CompareTo(a.CreationTimeUtc));
+                    for (int i = 0; i < dirs.Count; i++)
+                    {
+                        if (i > 0) sb.Append(",");
+                        var d = dirs[i];
+                        string saveFile = Path.Combine(d.FullName, "persistent_user_data.bin");
+                        long size = File.Exists(saveFile) ? new FileInfo(saveFile).Length : 0;
+                        sb.Append("{\"name\":").Append(JsonStr(d.Name))
+                          .Append(",\"createdAt\":").Append(JsonStr(d.CreationTime.ToString("o")))
+                          .Append(",\"sizeBytes\":").Append(size)
+                          .Append("}");
+                    }
+                }
+            }
+            catch (Exception ex) { Log("BuildBackupsJson failed: " + ex.Message); }
+            sb.Append("]");
+            return sb.ToString();
+        }
+
+        private void HandleCreateBackup(HttpListenerContext ctx)
+        {
+            string label = ctx.Request.QueryString["label"];
+            string name = CreateBackup(string.IsNullOrEmpty(label) ? "manual" : label);
+            if (name == null)
+            {
+                WriteJson(ctx, 500, "{\"error\":\"Could not create a backup - persistent_user_data.bin wasn't found under any Steam userdata folder. See Editor_Log.txt for details.\"}");
+                return;
+            }
+            WriteJson(ctx, 200, "{\"ok\":true,\"name\":" + JsonStr(name) + "}");
+        }
+
+        private void HandleRestoreBackup(HttpListenerContext ctx)
+        {
+            string name = ctx.Request.QueryString["name"];
+            if (string.IsNullOrEmpty(name)) { WriteJson(ctx, 400, "{\"error\":\"Missing 'name'.\"}"); return; }
+
+            // Guard against path traversal - the folder we open has to be a
+            // direct, exact-name child of BackupsDir, nothing else.
+            string folderPath = Path.Combine(BackupsDir, name);
+            if (!Directory.Exists(folderPath) || Path.GetFileName(folderPath) != name)
+            {
+                WriteJson(ctx, 404, "{\"error\":\"Backup not found.\"}");
+                return;
+            }
+
+            string backupFile = Path.Combine(folderPath, "persistent_user_data.bin");
+            if (!File.Exists(backupFile)) { WriteJson(ctx, 404, "{\"error\":\"Backup folder is missing its save file.\"}"); return; }
+
+            string saveFile = FindSaveFilePath();
+            if (saveFile == null) { WriteJson(ctx, 500, "{\"error\":\"Could not locate the live save file to restore over.\"}"); return; }
+
+            try
+            {
+                // Safety-net: back up whatever's on disk RIGHT NOW before
+                // overwriting it, labeled so it's obviously not a normal
+                // backup - undoes a bad restore choice the same way every
+                // other Reset button in this mod does.
+                CreateBackup("before-restore");
+                File.Copy(backupFile, saveFile, true);
+                Log($"HandleRestoreBackup: restored '{backupFile}' -> '{saveFile}'.");
+                WriteJson(ctx, 200, "{\"ok\":true,\"note\":\"Restored to disk. This only takes effect on your NEXT load - close and reopen the save (or restart the game) to see it. The currently running session is unaffected until then, and will overwrite this restore again the next time anything in the game (or this mod) autosaves.\"}");
+            }
+            catch (Exception ex)
+            {
+                Log("HandleRestoreBackup failed: " + ex.Message);
+                WriteJson(ctx, 500, "{\"error\":" + JsonStr("Restore failed: " + ex.Message) + "}");
+            }
+        }
+
+        // ---------- Cheat Mode ----------
+        //
+        // A single session-scoped switch (resets to off on every mod
+        // reload/game restart - deliberately not persisted anywhere, so it's
+        // never silently "still on" from a previous session) that relaxes
+        // three limits this mod normally enforces:
+        //   1. Module roll ceiling: SetModuleRollValue clamps to 0-1
+        //      normally (a real roll always is); Cheat Mode raises that to
+        //      CheatModeRollCeiling (300%).
+        //   2. Rarity range: HandleSetRarity/HandleInventorySetRarity
+        //      normally reject a rarity outside the module's own valid
+        //      range (m_MinRarity-m_MaxRarity); Cheat Mode skips that check.
+        //   3. Module level: previously had NO direct-write path at all -
+        //      the only way a module's own m_UpgradeLevel could change was
+        //      via the official TryModifyBlueprintModuleLevel (+1, capped
+        //      by the game itself), and nothing in the UI even called that.
+        //      HandleSetModuleLevel/HandleSetInventorySetModuleLevel below
+        //      are new, cheat-mode-only direct writes, mirroring how
+        //      HandleSetLevel already works for a whole item.
+        // Blueprint/item-level itself was ALREADY an uncapped direct write
+        // (HandleSetLevel has never validated against maxLevel) - the only
+        // thing stopping you from typing past max there was the frontend
+        // greying out the +/Upgrade Level buttons, which the client relaxes
+        // once Cheat Mode is on (see EditorUI.html).
+        private bool _cheatModeEnabled = false;
+
+        private string BuildCheatModeJson() => "{\"enabled\":" + (_cheatModeEnabled ? "true" : "false") + "}";
+
+        private void HandleSetCheatMode(HttpListenerContext ctx)
+        {
+            string enabledStr = ctx.Request.QueryString["enabled"];
+            bool wantEnabled = string.Equals(enabledStr, "true", StringComparison.OrdinalIgnoreCase);
+
+            bool turningOn = wantEnabled && !_cheatModeEnabled;
+            _cheatModeEnabled = wantEnabled;
+            Log($"HandleSetCheatMode: cheat mode <- {_cheatModeEnabled}.");
+
+            string backupName = null;
+            if (turningOn)
+            {
+                // Per Cameron: back up the save the moment cheat mode gets
+                // switched on, before any out-of-bounds edit can happen -
+                // same CreateBackup used everywhere else in this file, just
+                // triggered by this instead of SaveNow()'s own once-per-
+                // session auto-backup (which may have already fired earlier
+                // and wouldn't fire again here).
+                backupName = CreateBackup("cheat-mode-enabled");
+                Log("HandleSetCheatMode: pre-cheat-mode backup " + (backupName != null ? "created (" + backupName + ")" : "FAILED - see the log line above this one"));
+            }
+
+            WriteJson(ctx, 200, "{\"ok\":true,\"enabled\":" + (_cheatModeEnabled ? "true" : "false") +
+                ",\"backupName\":" + JsonStr(backupName) + "}");
+        }
+
+        private void HandleSetModuleLevel(HttpListenerContext ctx)
+        {
+            if (!_cheatModeEnabled) { WriteJson(ctx, 400, "{\"error\":\"Enable Cheat Mode to set a module's level directly - this bypasses the game's own upgrade cap.\"}"); return; }
+
+            int bpIndex = QueryInt(ctx, "blueprintIndex", -1);
+            int modIndex = QueryInt(ctx, "moduleIndex", -1);
+            int level = QueryInt(ctx, "level", -1);
+            if (level < 0) { WriteJson(ctx, 400, "{\"error\":\"missing or bad level\"}"); return; }
+
+            var blueprints = GetBlueprintsSnapshot();
+            if (bpIndex < 0 || bpIndex >= blueprints.Count) { WriteJson(ctx, 400, "{\"error\":\"bad blueprintIndex\"}"); return; }
+            object bp = blueprints[bpIndex];
+            object generatedData = GetInstanceMemberValue(bp, "m_GeneratedData");
+            object module = GetModuleAt(generatedData, modIndex);
+            if (module == null) { WriteJson(ctx, 400, "{\"error\":\"bad moduleIndex\"}"); return; }
+
+            bool wrote = TrySetInstanceMemberValue(module, "m_UpgradeLevel", level);
+            bool wroteModuleBack = wrote && TryWriteModuleBack(generatedData, modIndex, module);
+            bool wroteGeneratedBack = wroteModuleBack && TrySetInstanceMemberValue(bp, "m_GeneratedData", generatedData);
+            Log($"HandleSetModuleLevel: blueprint[{bpIndex}] module[{modIndex}] m_UpgradeLevel <- {level}, wroteBack={wroteGeneratedBack}.");
+            if (wroteGeneratedBack) SaveNow();
+            WriteJson(ctx, 200, "{\"ok\":" + (wroteGeneratedBack ? "true" : "false") + "}");
+        }
+
+        private void HandleSetInventoryModuleLevel(HttpListenerContext ctx)
+        {
+            if (!_cheatModeEnabled) { WriteJson(ctx, 400, "{\"error\":\"Enable Cheat Mode to set a module's level directly - this bypasses the game's own upgrade cap.\"}"); return; }
+
+            int index = QueryInt(ctx, "index", -1);
+            int modIndex = QueryInt(ctx, "moduleIndex", -1);
+            int level = QueryInt(ctx, "level", -1);
+            if (level < 0) { WriteJson(ctx, 400, "{\"error\":\"missing or bad level\"}"); return; }
+
+            var items = GetInventorySnapshot();
+            if (index < 0 || index >= items.Count) { WriteJson(ctx, 400, "{\"error\":\"bad index\"}"); return; }
+            object item = items[index];
+            object generatedData = GetInstanceMemberValue(item, "m_GeneratedData");
+            object module = GetModuleAt(generatedData, modIndex);
+            if (module == null) { WriteJson(ctx, 400, "{\"error\":\"bad moduleIndex\"}"); return; }
+
+            bool wrote = TrySetInstanceMemberValue(module, "m_UpgradeLevel", level);
+            bool wroteModuleBack = wrote && TryWriteModuleBack(generatedData, modIndex, module);
+            bool wroteGeneratedBack = wroteModuleBack && TrySetInstanceMemberValue(item, "m_GeneratedData", generatedData);
+            bool wroteBack = wroteGeneratedBack && TryWriteInventoryItemBack(index, item);
+            Log($"HandleSetInventoryModuleLevel: inventory[{index}] module[{modIndex}] m_UpgradeLevel <- {level}, wroteBack={wroteBack}.");
+            if (wroteBack) SaveNow();
+            WriteJson(ctx, 200, "{\"ok\":" + (wroteBack ? "true" : "false") + "}");
         }
 
         // ---------- module type catalog (for swapping what a module slot IS) ----------
@@ -2993,6 +3623,276 @@ namespace JumpSpaceEditor
             "Expendable Minigun",
         };
 
+        // Static guid -> (category, display name) reference table, sourced
+        // from JumpSaves (github.com/gurudennis/JumpSaves, MIT licensed), an
+        // independent offline Jump Space save editor that reverse-engineered
+        // the full 40-item static MajorItemType catalog directly from the
+        // game's own asset guids (JSL/Constants.cs). Every "Raw" guid there
+        // is a plain 32-char Unity asset guid with no dashes - the same
+        // format m_AssetGUID/m_WeaponEntriesByGuid keys come back as from
+        // live reflection, so these line up directly once both sides are
+        // normalized (lowercased, dashes stripped - see NormalizeGuid).
+        // This exists specifically to fill in the ship-component category
+        // gap noted above (AllShipComponents entries have no per-entry
+        // category signal of their own yet) and to guarantee the full 40
+        // template catalog is present even if live discovery ever misses an
+        // entry.
+        private static string NormalizeGuid(string guid)
+        {
+            if (string.IsNullOrEmpty(guid)) return null;
+            return guid.Replace("-", "").ToLowerInvariant();
+        }
+
+        private static readonly Dictionary<string, string> StaticItemCategoryByGuid = new Dictionary<string, string>
+        {
+            // Player Weapons (on-foot)
+            { "b5b14acbf52842b4f90002bd4e9d1391", "Weapons" }, // Bulldog-SA7 (AR)
+            { "dd2afc39b34322c4381b6a3ed3e5988a", "Weapons" }, // VSR Halberd (AR)
+            { "b90b477e483f6cc4aa9a48f33e4400e3", "Weapons" }, // Stinger MP-75 (SMG)
+            { "ea1f1e6ac3c88fe469708ce10b5e451a", "Weapons" }, // CX-305 Sideclip (SMG)
+            { "11d2d7e9f079ed4499c9591d8d68c7a7", "Weapons" }, // MAW-23 (Shotgun)
+            { "2cbd789d647fa9a4d96f462001a99c91", "Weapons" }, // SR.99 Javelin (Sniper)
+            { "55b2b5f6d20d4eb4ab9ef216e5237928", "Weapons" }, // Ironbelt (LMG)
+            { "046383b13f53ad144805f5dca98b4b86", "Weapons" }, // Heat Blade (Melee)
+            { "a52219e07db611248800766fe8d53744", "Weapons" }, // Wrench (Melee)
+            { "f077b42a85cfb7f4bb0d55729c4fc5c0", "Weapons" }, // Crowbar (Melee)
+            // Multiturrets
+            { "558ac570efdfbe64390ab32c39d45ff3", "Multiturrets" }, // Assault Turrets
+            { "e2b646f5b39d9994a929c62d32635793", "Multiturrets" }, // Mining Lasers
+            { "b98c1f15ee8b58343acf4f62ddaa93ab", "Multiturrets" }, // Flak Launcher Turrets
+            { "5e4082467be3c344698f724e74c6660a", "Multiturrets" }, // Gatling Turrets
+            // Pilot Cannons
+            { "c7e0f6d13e18db440b37a42470f42744", "Pilot Cannons" }, // Fragmentation Cannon
+            { "8c32f9e4ff293894582ceb6b831c40af", "Pilot Cannons" }, // Reaver Rotary Cannon
+            { "d151b8914ed56d74985d345a118f9a5e", "Pilot Cannons" }, // Bolt Accelerator
+            { "c3346b9a547672948a2fe02ea2bb5de5", "Pilot Cannons" }, // Disruptor Laser
+            // Special Weapons
+            { "e1d2c08495890004e9ebb0ca7fe7c5a1", "Special Weapons" }, // Burst Shield
+            { "3290a7dbea83de5488cca77e44cae0a8", "Special Weapons" }, // Vulcan Rotary Cannon
+            { "889c471a3fab57d44b28f2592be5d7f8", "Special Weapons" }, // Thunderburst Heavy Cannon
+            { "d593e671947518544ab6dcd2deef3e2e", "Special Weapons" }, // Lance Railgun
+            { "15bebeb1e9273af4fb7f4213452a6c58", "Special Weapons" }, // Missile Launcher
+            { "10b36cf783993154cbcf8679744cd900", "Special Weapons" }, // Targeting Module
+            // Engines
+            { "f1302af5a63e825478b7fb9f953401aa", "Engines" }, // Drift Phase Engine
+            { "fb2bbc3f13c228a44ba53f020e1df249", "Engines" }, // Nitro Pulse Engine
+            { "dde01f5723d9b0047abb3d223f5541cd", "Engines" }, // Mass Ejector Engine
+            { "4524f4ac1fa8cb34dbff50f8c5c14927", "Engines" }, // Microplasma Engine
+            // Shield Generators
+            { "352d8b4d1f0f38249b5a88c19a11caf3", "Shield Generators" }, // Skirmisher Shield
+            { "554d65de54698714c9f5d2f73bc33261", "Shield Generators" }, // Fighter Shield
+            { "7a2d7e2dbbb33f742a1c885667377425", "Shield Generators" }, // Fortress Shield
+            // Sensors
+            { "3ee2f96ed55e8de4898d4f922eba8f66", "Sensors" }, // Sector Scanner
+            { "eac8acd058989964ab7a07cf7de03fa5", "Sensors" }, // Supply Uplink Unit
+            { "d4b4eb9b7856fce4e9c1bb3a78c9807e", "Sensors" }, // Vector Targeting Module
+            // Reactors
+            { "95c51a0f21d28ba459a43bbf3dbc0790", "Reactors" }, // Null Wave Reactor
+            { "65e495611fd9233419832053f8ce55bd", "Reactors" }, // Split Reactor
+            { "f400f9acd1731b64a87b69ce40517971", "Reactors" }, // Materia Scatter Reactor
+            { "85b241f7f2fa6654e9c522519358d1bc", "Reactors" }, // Solid State Reactor
+            // Aux. Generators
+            { "2c60b00a88d34b546865a36738fabc2a", "Aux. Generators" }, // Bio Fission Generator
+            { "4bfcb457279ce824e8fd7989760d9252", "Aux. Generators" }, // Materia Shift Generator
+            { "8cbe912f6e885134680a52935cca96a5", "Aux. Generators" }, // Null Tension Generator
+        };
+
+        private static readonly Dictionary<string, string> StaticItemNameByGuid = new Dictionary<string, string>
+        {
+            { "b5b14acbf52842b4f90002bd4e9d1391", "Bulldog-SA7 (AR)" },
+            { "dd2afc39b34322c4381b6a3ed3e5988a", "VSR Halberd (AR)" },
+            { "b90b477e483f6cc4aa9a48f33e4400e3", "Stinger MP-75 (SMG)" },
+            { "ea1f1e6ac3c88fe469708ce10b5e451a", "CX-305 Sideclip (SMG)" },
+            { "11d2d7e9f079ed4499c9591d8d68c7a7", "MAW-23 (Shotgun)" },
+            { "2cbd789d647fa9a4d96f462001a99c91", "SR.99 Javelin (Sniper)" },
+            { "55b2b5f6d20d4eb4ab9ef216e5237928", "Ironbelt (LMG)" },
+            { "046383b13f53ad144805f5dca98b4b86", "Heat Blade (Melee)" },
+            { "a52219e07db611248800766fe8d53744", "Wrench (Melee)" },
+            { "f077b42a85cfb7f4bb0d55729c4fc5c0", "Crowbar (Melee)" },
+            { "558ac570efdfbe64390ab32c39d45ff3", "Assault Turrets" },
+            { "e2b646f5b39d9994a929c62d32635793", "Mining Lasers" },
+            { "b98c1f15ee8b58343acf4f62ddaa93ab", "Flak Launcher Turrets" },
+            { "5e4082467be3c344698f724e74c6660a", "Gatling Turrets" },
+            { "c7e0f6d13e18db440b37a42470f42744", "Fragmentation Cannon" },
+            { "8c32f9e4ff293894582ceb6b831c40af", "Reaver Rotary Cannon" },
+            { "d151b8914ed56d74985d345a118f9a5e", "Bolt Accelerator" },
+            { "c3346b9a547672948a2fe02ea2bb5de5", "Disruptor Laser" },
+            { "e1d2c08495890004e9ebb0ca7fe7c5a1", "Burst Shield" },
+            { "3290a7dbea83de5488cca77e44cae0a8", "Vulcan Rotary Cannon" },
+            { "889c471a3fab57d44b28f2592be5d7f8", "Thunderburst Heavy Cannon" },
+            { "d593e671947518544ab6dcd2deef3e2e", "Lance Railgun" },
+            { "15bebeb1e9273af4fb7f4213452a6c58", "Missile Launcher" },
+            { "10b36cf783993154cbcf8679744cd900", "Targeting Module" },
+            { "f1302af5a63e825478b7fb9f953401aa", "Drift Phase Engine" },
+            { "fb2bbc3f13c228a44ba53f020e1df249", "Nitro Pulse Engine" },
+            { "dde01f5723d9b0047abb3d223f5541cd", "Mass Ejector Engine" },
+            { "4524f4ac1fa8cb34dbff50f8c5c14927", "Microplasma Engine" },
+            { "352d8b4d1f0f38249b5a88c19a11caf3", "Skirmisher Shield" },
+            { "554d65de54698714c9f5d2f73bc33261", "Fighter Shield" },
+            { "7a2d7e2dbbb33f742a1c885667377425", "Fortress Shield" },
+            { "3ee2f96ed55e8de4898d4f922eba8f66", "Sector Scanner" },
+            { "eac8acd058989964ab7a07cf7de03fa5", "Supply Uplink Unit" },
+            { "d4b4eb9b7856fce4e9c1bb3a78c9807e", "Vector Targeting Module" },
+            { "95c51a0f21d28ba459a43bbf3dbc0790", "Null Wave Reactor" },
+            { "65e495611fd9233419832053f8ce55bd", "Split Reactor" },
+            { "f400f9acd1731b64a87b69ce40517971", "Materia Scatter Reactor" },
+            { "85b241f7f2fa6654e9c522519358d1bc", "Solid State Reactor" },
+            { "2c60b00a88d34b546865a36738fabc2a", "Bio Fission Generator" },
+            { "4bfcb457279ce824e8fd7989760d9252", "Materia Shift Generator" },
+            { "8cbe912f6e885134680a52935cca96a5", "Null Tension Generator" },
+        };
+
+        // Static guid -> canonical module title reference table, sourced from
+        // JumpSaves' ShipModuleType + PlayerWeaponModuleType catalogs
+        // (JSL/Constants.cs) - 117 unique entries covering every Upgradeable
+        // Feature and Custom Module the game has, for both ship components
+        // and on-foot weapons. Unlike the in-game "description" text (which
+        // is level/rarity-dependent flavor text pulled via
+        // GetLocalizedDescription and can be vague, e.g. doesn't always spell
+        // out a status effect name explicitly), these titles are the game's
+        // own short, consistent, guid-keyed identifiers - e.g. guid
+        // "318504b5..." is always "Sear chance on hit" no matter what
+        // rarity/level the module rolled. Exposed to the client as
+        // "staticTitle" alongside "description" so status-effect tagging
+        // (see STATUS_EFFECT_INFO/statusEffectTagsHtml in EditorUI.html) has
+        // a second, more reliable signal to match against - some module
+        // guids here aren't matched by any live-discovered module yet (the
+        // reflection side doesn't have a full 1:1 guid catalog of its own),
+        // so this is intentionally a flat guid->title lookup rather than
+        // something merged into _itemTemplateCandidates like the item table
+        // above.
+        private static readonly Dictionary<string, string> StaticModuleTitleByGuid = new Dictionary<string, string>
+        {
+            { "9009aa4df2ad3a04ba4dea5518e1d611", "(F) Reload speed" },
+            { "cafc9599b386ee84a890c2c760b62f5e", "(F) Magazine size" },
+            { "df5b391e9981fdd47af8f2f6e74a9fd9", "(F) Damage" },
+            { "1cb68cd7f09dd6843a9ea451429e6139", "(F) Bonus damage" },
+            { "8395a832a680a8741b9e61af12c72307", "(F) Fire rate" },
+            { "072b30aa0e26c5c49b7c3ca156c62282", "Reduced materia cost" },
+            { "bb680a7ce4769fa4396b560d36435371", "Corrosion chance on hit" },
+            { "b4c71cf386f6f3a42aaf7fe311eb202c", "Additional projectiles" },
+            { "09dd872497cec754bba28c7616b8810f", "Additional shot % per mag" },
+            { "c70b3f3ddb76d4141bc113b651ffbfdd", "EMP chance on hit" },
+            { "e60458dfaa15275469527dab6ddf9b02", "Breach chance on hit" },
+            { "bf3cecfa0702aa04e95d109144f21ed1", "Corrosion projectile" },
+            { "fc4cf93ada70dcf4c910cad5faa5c9a9", "Chance to chain enemies" },
+            { "6a8561321dfb64d4789ae84a0cda11d4", "Increase Rupture damage" },
+            { "3fd4cd1ef685c464bab96af82388c2ac", "Breach causes Rupture" },
+            { "72a1c39fe91bdee4da863bee2afa6db8", "Virus chance on hit" },
+            { "5c15051e787622d43bae554502e4a052", "Virus causes EMP" },
+            { "2f006f1878bb9ed4992f73cf87ac953d", "Max speed" },
+            { "b9d81f3aea38f3d47848701fcbdd521b", "Max boost" },
+            { "7aa83416608d90e41b0c0ecfab3e869a", "Turn rate" },
+            { "782a431317dc9a64f90e4c20edfe0e04", "Acceleration" },
+            { "8dacbec9a6bac2947ab3eaecb8a020f5", "Faster shield recharge" },
+            { "76dc2ea8251eafe4b9752f33a15f90df", "Lower shield break chance" },
+            { "34f7c993f959fbe459777c90eab95189", "Shorter shield downtime" },
+            { "987886742b6da2740b8f64922c59b0b1", "Reactor capacity" },
+            { "fe1243281c445474da91a86cd378d640", "Additional shots per mag" },
+            { "318504b5400b90d4c81cc63c64baf0ac", "Sear chance on hit" },
+            { "e8ca44d9362a2e143917f65180369a6d", "Rupture projectile" },
+            { "66ad1d1ada3da75479cef1a83a739aae", "Radiation after corrosion" },
+            { "64c441c7ba5afa04c86e656d35cddfd3", "Corrosion after EMP" },
+            { "1a0f06c6024f86d48bdc56076def5dd3", "Shield capacity" },
+            { "682de849168890a43bd79f0473a0e76b", "Virus spreads on kill" },
+            { "2db0439951d75ba4dade764bbcdd1369", "Radiation projectile" },
+            { "32a8f3dc569318142be2483792227bc1", "Breach after sear" },
+            { "f59d3b957056095468442df700fb5a08", "Increase sear damage" },
+            { "b0c37c92a2ca2f4418bd366fc1717911", "Damage after EMP" },
+            { "52e9347eefe773444bc3a1520f4221af", "Reload speed" },
+            { "c364f658905ff554dbda3ba3aa5bb34f", "Damage per status effect" },
+            { "0858882df0957284780955d88b67f44c", "Damage after Sear" },
+            { "44a3739d1453d884cad555454d1dd242", "Sear projectile" },
+            { "0f8329280d1551a4981a1bab85732db7", "Corrosion after Sear" },
+            { "a12a873fd77ff6c45bb949d78d06240b", "Sear after Rupture" },
+            { "704bdac3db82ade45ad1690916d7ad1b", "Hits on EMP restore shield" },
+            { "594cfedb80c49f548be209204da1eed6", "Disruption after EMP (1)" },
+            { "a5331df01eb1f1147b27f8cb852c82ca", "Disruption after EMP (2)" },
+            { "8fecf9fa19f5d0748bc7e5794d2e2e93", "(F) Damage" },
+            { "bb21cfa6fd5a9364c99ef22d8d4ea38f", "(F) Fire rate" },
+            { "68fbcdf863d097c498e0ffb0ec1d4cba", "(F) Magazine capacity" },
+            { "2a17d7fe09ea50a47b88336247b9c5ff", "(F) Bonus magazine capacity" },
+            { "13cec6085efd0a342a6ecfef9f5aa2da", "(F) Reload speed" },
+            { "e755854780143a1419bec0445b46f072", "Reload speed" },
+            { "425315a74cef11542b1c3fcb07d8d934", "Mag size but less damage" },
+            { "676bc98f5878db4409a11c68b7e2bd59", "Consecutive crit damage" },
+            { "5ef2583dd770e944e84c8ab47e12b50f", "Chance to chain enemies" },
+            { "c2e9a86756b9729478c43f18a341c2e2", "Breach chance on hit" },
+            { "87320adbde1d5a6448effd71fcba76b3", "Crits return ammo" },
+            { "3d864ddf5a372664ebcad63c686b0ceb", "Rupture after damage" },
+            { "4e049bf738976824ebdfd81f9fd34796", "Damage but lower fire rate" },
+            { "4ec6f7c2d7fa7734792a2db069c46d9c", "Damage but lower mag size" },
+            { "749c007fa80faf840ade9af6e8d7584f", "EMP on crit" },
+            { "15748cbe448ab444c990e086e31fea7b", "Rupture chance on hit" },
+            { "71a93d1d5c620864c93e796b0218a90b", "Kills restore health" },
+            { "3ad789a04e7a05e42affc0e22f0a309a", "Corrosion chance on hit" },
+            { "f893ca79dbff4b448bdf21715d8e6d1d", "Additional projectiles" },
+            { "4ab19bf28b038444d904a1032d398ac7", "Damage" },
+            { "490125f0fc44ef04090900b7eaaafeec", "Last shot does more damage" },
+            { "989e818fc6f5c4a47ac1dbd682f96e94", "Magazine size" },
+            { "61121570f54f3904b9bef6f39801d39c", "Final shot frag" },
+            { "55561444a0d58ff4a980836c77f1905c", "Sear chance on hit nearby" },
+            { "dfb61796e77bac246b8cb6786ef49297", "Sear after damage" },
+            { "3c3ea2f8998b5474d91965dea056b2ac", "Kills increase melee" },
+            { "767a4ec9ef9c7cf40be160743b4e6cf3", "Fire rate" },
+            { "e41e01652b2bcc5479b2742f0e062ba6", "Corrosion after damage" },
+            { "284e8453cfde3ee40b5316f7cf4ade45", "Damage after corrosion" },
+            { "17064961c8b22fb40a445885cf78adbe", "Sear chance on hit" },
+            { "bbcd941bbc8563748afe7dc0bad13e96", "Damage after EMP" },
+            { "57f9ebc23ef4bbc4aa9be052158b6f63", "Damage per status effect" },
+            { "44d9c736d6730d2409de0f0051e08c70", "Melee EMP after deflect" },
+            { "6da7dc2db0f033242a5b6990bae55e15", "Melee heals after deflect" },
+            { "e8b4433b1b4cf5648b5a7c236fdf4507", "Last shot does % more damage" },
+            { "f004308cf75411f4897f0286397ca2c2", "Random status effect on hit" },
+            { "a51a20461ffa1bc489e60f410939e291", "Additional shot but less damage" },
+            { "037a3e370b2d3b44a9a51e125e188bf3", "Sear nearby on reload" },
+            { "7968a14bbe8c617449c77d016a5ea8d0", "Kills increase speed" },
+            { "a313d5434c4944a4db9e07880bdba5aa", "Melee after kill does EMP" },
+            { "12c40352320ea444f9c77a71395b08aa", "Magazine size percent" },
+            { "589234c5148491b4aaf3a5507f66516d", "Breach causes pierce" },
+            { "ebf495b7db87dc34095f80c4fd0bea12", "Damage if rupture pool full" },
+            { "e4e5defdb4de7aa41ac619e93975122b", "EMP chance on hit" },
+            { "8990c7ff4b2a1a34cac6b37f53e53055", "Parry increases speed" },
+            { "7b2a61372446d15499ae0f69327ceb83", "Hits on breach return ammo" },
+            { "5c66eb6f47c008349a8b49f84e2e2082", "Increase speed" },
+            { "d26c525617760824f8227086dd3d96a2", "Hits on Virus restore health" },
+            { "b4e2f2222eb9d434885137e1bf8ccfd0", "Damage after Virus" },
+            { "9d86d4d33ad602d4aa60423ffce533ce", "Corrosion spreads on kill" },
+            { "92aa6c968e8654f4bada9f3ef80b1640", "Melee Corrosion after deflect" },
+            { "b3770c83f3075a446803fa24b8985510", "Melee damage after deflect" },
+            { "3a7e482e13b43c34997f26b5c2919733", "Breach if Rupture pool full" },
+            { "97113ea8e3a5b2a44a86b82d09fe836d", "Damage causes Virus" },
+            { "ce3dc6eae836c7744a841123d95dfc18", "Radiation on crit" },
+            { "d766bd983a8afd941a5684e0c251aa0e", "Damage after Sear" },
+            { "01e31fd07b981f04aa2f1dd074b76054", "Virus spreads on kill" },
+            { "139ad3ab83c9d54408630df4b97f9f44", "Melee Virus after deflect" },
+            { "bb60b003dfc8fed4e9737d0a3ba8268b", "Melee Sear after deflect" },
+            { "38382857f879220468fcbaceb56e6fda", "Sear while burning" },
+            { "a12c412c1a390ac4493cfda03b175993", "Sear spreads on kill" },
+            { "d4ed62e9c08e23f46ad535e356990af4", "Hits on EMP restore shield" },
+            { "440c9c4e30c1abd43bc5b67832bc5745", "Radiation chance on hit" },
+            { "f4703aefe41a81541a3328bcb0583567", "EMP after corrosion" },
+            { "5478a45dbd9c0b7428ec597f0531619e", "Melee Breach after deflect" },
+            { "9f1db6fbb63757a48ad3d0a98d94286d", "Melee Rupture after deflect" },
+            { "268f2baa7d7a5e449bae9eba401b5fcc", "Virus chance on hit" },
+            { "e1af7dcc04bf7994e8f37f4043a56733", "Crit damage" },
+            { "48734eef325405640b5c7602305b0aa6", "Virus spreads statuses on kill" },
+            { "4ce8ab4b7c0cc94498d825166f9cbbfb", "Virus strengthens statuses" },
+            { "2230c9a581041174c90d8ca3546ad1ad", "Fire rate ramps up" },
+            { "1758c4f911d6d964cad36a998c5d0e22", "Corrosion after EMP" },
+        };
+
+        // Looks up a module's canonical static title by guid (see
+        // StaticModuleTitleByGuid above). Returns null for a guid the table
+        // doesn't recognize - callers should fall back to the live
+        // description in that case, not treat null as an error.
+        private static string TryGetStaticModuleTitle(string moduleGuid)
+        {
+            string title;
+            if (StaticModuleTitleByGuid.TryGetValue(NormalizeGuid(moduleGuid), out title)) return title;
+            return null;
+        }
+
         private void RefreshItemTemplateCatalog()
         {
             _itemTemplateCandidates.Clear();
@@ -3050,13 +3950,16 @@ namespace JumpSpaceEditor
                         string typeName = GetInstanceMemberValue(comp, "m_typeOfItem")?.ToString();
                         if (!string.IsNullOrEmpty(guid) && !string.IsNullOrEmpty(displayName))
                         {
-                            // Category left null on purpose - see the field comment
-                            // above _itemTemplateCandidates. Client-side this means
-                            // these entries just don't show up in any
-                            // category-filtered picker yet (fail closed, not
-                            // fail open) until "Inspect Weapon/Ship Template
-                            // Catalog" gives us real TypeName->category evidence.
-                            _itemTemplateCandidates.Add(new ItemTemplateCandidate { Guid = guid, DisplayName = displayName, Category = null, TypeName = typeName });
+                            // Category used to be left null here (no confirmed
+                            // per-entry category signal from live discovery) -
+                            // now backed by StaticItemCategoryByGuid, a
+                            // guid->category table sourced from JumpSaves (see
+                            // the comment above that dictionary). Falls back to
+                            // null (fail closed) only for a guid that table
+                            // doesn't recognize.
+                            string category = null;
+                            StaticItemCategoryByGuid.TryGetValue(NormalizeGuid(guid), out category);
+                            _itemTemplateCandidates.Add(new ItemTemplateCandidate { Guid = guid, DisplayName = displayName, Category = category, TypeName = typeName });
                             shipCount++;
                         }
                     }
@@ -3081,7 +3984,25 @@ namespace JumpSpaceEditor
                 mergedFromCraftables++;
             }
 
-            Log($"RefreshItemTemplateCatalog: loaded {weaponCount} weapon template(s) (categorized), skipped {toolsSkipped} non-weapon tool(s) (NonWeaponToolNames), + {shipCount} ship component template(s) (category pending), + {mergedFromCraftables} merged in from CraftablesLibrary (ConfirmedBlueprintNames).");
+            // Belt-and-suspenders completeness pass: guarantee every one of
+            // the 40 confirmed static templates (StaticItemCategoryByGuid /
+            // StaticItemNameByGuid, sourced from JumpSaves) shows up in the
+            // catalog even if live discovery missed it for some reason (e.g.
+            // an empty AllShipComponents on a given game version, or a guid
+            // formatting mismatch upstream). Matches on normalized guid so it
+            // never duplicates an entry already found live.
+            int mergedFromStaticCatalog = 0;
+            foreach (var kv in StaticItemNameByGuid)
+            {
+                string normalizedGuid = kv.Key; // StaticItemNameByGuid keys are already normalized
+                if (_itemTemplateCandidates.Exists(c => NormalizeGuid(c.Guid) == normalizedGuid)) continue; // already present, don't duplicate
+                string category = null;
+                StaticItemCategoryByGuid.TryGetValue(normalizedGuid, out category);
+                _itemTemplateCandidates.Add(new ItemTemplateCandidate { Guid = normalizedGuid, DisplayName = kv.Value, Category = category, TypeName = "StaticCatalog" });
+                mergedFromStaticCatalog++;
+            }
+
+            Log($"RefreshItemTemplateCatalog: loaded {weaponCount} weapon template(s) (categorized), skipped {toolsSkipped} non-weapon tool(s) (NonWeaponToolNames), + {shipCount} ship component template(s) (categorized via StaticItemCategoryByGuid), + {mergedFromCraftables} merged in from CraftablesLibrary (ConfirmedBlueprintNames), + {mergedFromStaticCatalog} merged in from the static JumpSaves catalog (entries live discovery didn't find).");
         }
 
         private string BuildItemTemplateCatalogJson()

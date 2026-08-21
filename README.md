@@ -31,8 +31,22 @@ Jump Space is fully co-op with no PvP, and the developer has said as much on the
    - Swap what an item's base type is (e.g. turn a Sideclip into a Scorpion)
    - Change a weapon's scope or color
    - Edit your carried inventory (including swapping consumables) — **work in progress, see the note above**
+   - Duplicate a blueprint into the next open slot in its category, or permanently delete one — **new and less tested than everything else here; see the note below**
    - Add credits and materials
+   - Turn on **Cheat Mode** to push rarity, module level, and stat rolls past what the game normally allows — see the note below
 4. Everything saves automatically when you make a change. You can also hit **Save Now** on the page, or press **F6** in-game, any time you want to be sure.
+
+### Backups
+
+The page keeps its own rolling backups of your save file (separate from the game's own cloud sync), in a **Backups** section — a copy is taken automatically the first time you save each session, and you can also hit **Backup Now** any time. Restoring a backup only changes the file on disk right away; because this mod edits a *live* running game, you need to close and reopen your save (or restart the game) afterward to actually see the restored version — your current session won't notice until then.
+
+### Duplicate / Delete
+
+**Newer and less tested than everything else in this tool.** Every other edit here modifies an item that already exists in your save; Duplicate and Delete are the first features that create or remove one outright, which is a step further into unverified territory for this mod. Duplicate copies an item's rarity, level, type, and every module/cosmetic into the next open slot in the same category. Delete removes an item permanently — there's no per-item Reset for it, only a backup restore. If either one doesn't behave as expected, check `Editor_Log.txt` next to the mod DLL and let me know what it says.
+
+### Cheat Mode
+
+A toggle in the toolbar that relaxes three limits this tool normally enforces: rarity is no longer restricted to a module's valid range, a module's stat roll can go up to 300% instead of capping at 100%, and — new — a module's own level can be set directly, bypassing the game's normal upgrade cap (previously there was no way to do this at all; only the whole item's level could be set freely). Turning it on immediately backs up your save, separately from the automatic per-session backup. Values pushed past the game's real limits may behave unpredictably in-game, and the game itself might silently revert some of them on its own. Turning Cheat Mode off doesn't undo anything already written — it just goes back to enforcing the normal limits for anything you change from then on.
 
 ### Handy in-game keys
 
@@ -60,4 +74,4 @@ This builds `JumpSpaceEditor.dll` into `build\` and, if your `<GameDir>` is set 
 
 ## License
 
-[MIT](LICENSE) - do whatever you want with it lol.
+[MIT](LICENSE) - do whatever you want with it.
